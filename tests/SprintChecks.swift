@@ -10,6 +10,7 @@ struct SprintChecks {
         try DocumentFollowUpChecks.run()
         try WeeklyCheckInChecks.run()
         try HistoryQueryChecks.run()
+        RegionSuggestionChecks.run()
         MapCoverageChecks.run()
         try PreventionPreparationChecks.run()
         try ScannerChecks.run()

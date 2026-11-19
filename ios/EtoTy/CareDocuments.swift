@@ -35,7 +35,7 @@ struct CareDocument: Identifiable, Equatable {
 }
 
 enum CareDocumentError: LocalizedError {
-    case invalid, unsupported, password, tooLarge, tooManyPages, imageDimensions, unavailable, invalidCitation
+    case invalid, unsupported, password, tooLarge, tooManyPages, imageDimensions, unavailable, invalidCitation, changed
 
     var errorDescription: String? {
         switch self {
@@ -45,6 +45,7 @@ enum CareDocumentError: LocalizedError {
         case .tooLarge: return "PDF должен быть до 20 МБ, фото — до 10 МБ."
         case .tooManyPages: return "В одном PDF можно сохранить до 30 страниц."
         case .imageDimensions: return "Размер одного изображения ограничен 30 мегапикселями."
+        case .changed: return "Запись изменилась. Сверь актуальный источник и выбери область ещё раз."
         case .invalidCitation: return "Проверь страницу в оригинале. Цитата должна содержать не больше 1000 символов."
         case .unavailable: return "Не удалось открыть сохранённый материал."
         }
@@ -177,9 +178,10 @@ struct CareDocuments {
         return pdf.numberOfPages
     }
 
-    func assign(_ region: Region?, to id: String) throws {
+    func assign(_ region: Region?, to id: String, ifUnchanged expected: CareDocument? = nil) throws {
         try Self.fileLock.withLock {
             let document = try read(id)
+            if let expected, expected != document { throw CareDocumentError.changed }
             let metadata = Metadata(name: document.name, kind: document.kind, imported: document.imported,
                                     regionName: region?.rawValue, evidence: document.evidence)
             try write(metadata, in: directory.appendingPathComponent(id))

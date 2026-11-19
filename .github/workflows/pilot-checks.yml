@@ -16,6 +16,18 @@ jobs:
       - run: make check
       - run: make ios-build
       - run: make ios-smoke
+  evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    container: swift:6.2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check confirmed document region suggestions
+        run: |
+          swiftc ios/EtoTy/PilotProfile.swift ios/EtoTy/CareRegionSuggestion.swift tests/RegionSuggestionChecks.swift tests/portable/main.swift -o /tmp/region-check
+          /tmp/region-check
   database:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
