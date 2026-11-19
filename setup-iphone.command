@@ -132,13 +132,10 @@ app="local-data/build/ios/Build/Products/Debug-iphonesimulator/EtoTy.app"
 bundle_id=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")
 xcrun simctl install "$simulator" "$app"
 xcrun simctl launch --terminate-running-process "$simulator" "$bundle_id"
-sim_app="$DEVELOPER_DIR/Applications/Simulator.app"
-if [ -d "$sim_app" ]; then
-    open -a "$sim_app" --args -CurrentDeviceUDID "$simulator"
+device_hub="$xcode_app/Contents/Applications/DeviceHub.app"
+if [ -d "$device_hub" ]; then
+    open -a "$device_hub" "devices://device/open?id=$simulator"
 else
-    if ! open -b com.apple.iphonesimulator --args -CurrentDeviceUDID "$simulator"; then
-        printf '%s\n' 'Приложение запущено в симуляторе «EtoTy Development». Чтобы увидеть окно, открой Simulator через Xcode → Open Developer Tool.' >&2
-        exit 1
-    fi
+    open -a "$DEVELOPER_DIR/Applications/Simulator.app" --args -CurrentDeviceUDID "$simulator"
 fi
 printf '%s\n' '«Это ты» запущено. При следующем запуске личный профиль сохранится в этом симуляторе.'

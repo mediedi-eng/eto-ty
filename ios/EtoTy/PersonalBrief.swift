@@ -1,10 +1,16 @@
 import Foundation
 
 enum PersonalBrief {
-    static func text(plan: CarePlan, documents: [CareDocument], includeTopic: Bool, includeAnswer: Bool) -> String {
+    static func text(plan: CarePlan, documents: [CareDocument], includeTopic: Bool, includeAnswer: Bool,
+                     includeQuestionIDs: Set<UUID> = []) -> String {
         var sections = ["К приёму · Это ты"]
         if includeTopic, let topic = plan.topic {
-            sections.append("Что хочу обсудить\n" + topic + "\nИсточник: со слов пользователя.")
+            sections.append("Согласованное дело в личном плане\n" + topic)
+        }
+        let questions = plan.visitQuestions.filter { includeQuestionIDs.contains($0.id) }
+        if !questions.isEmpty {
+            let lines = questions.map { "• " + $0.text }
+            sections.append("Мои вопросы врачу\n" + lines.joined(separator: "\n"))
         }
         if includeAnswer, let answer = plan.lastAnswer {
             sections.append("Последний ответ в диалоге · " + dateLabel(answer.createdAt) + "\n" + answer.text +

@@ -65,6 +65,22 @@ enum SessionChecks {
                                    now: { instant }, liveClock: false)
         precondition(restored.plan == session.plan)
 
+        let weeklyDate = instant.addingTimeInterval(120)
+        precondition(!session.schedule(at: instant, weekly: true))
+        precondition(session.schedule(at: weeklyDate, weekly: true))
+        try await waitUntil { delivery.requests.last?.0 == weeklyDate }
+        precondition(delivery.requests.last?.1 == true)
+        instant = weeklyDate
+        session.refresh()
+        try await waitUntil { delivery.requests.last?.0 == nil }
+        precondition(session.plan.hasDueQuestion && session.plan.nextContact == nil)
+        session.send("Вопросы готовы")
+        let agreedNext = session.plan.nextContact!
+        try await waitUntil { delivery.requests.last?.0 == agreedNext }
+        precondition(delivery.requests.last?.1 == false && tryLoad(storage)?.nextContact == agreedNext)
+        session.stopWeeklyContacts()
+        precondition(tryLoad(storage)?.weeklyContact == nil && session.plan.nextContact == agreedNext)
+
         delivery.hold = true
         session.schedule(at: later.addingTimeInterval(300))
         try await waitUntil { delivery.waiting != nil }

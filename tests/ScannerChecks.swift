@@ -17,6 +17,25 @@ enum ScannerChecks {
         return image
     }
 
+    private static func checkFileLimit() throws {
+        // Fixed noise resists JPEG compression so a batch can reach the real file limit before 30 pages.
+        let edge = 2000
+        guard let context = CGContext(data: nil, width: edge, height: edge, bitsPerComponent: 8,
+                                      bytesPerRow: edge * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue),
+              let words = context.data?.assumingMemoryBound(to: UInt32.self) else { throw Failure.fixture }
+        var seed: UInt32 = 42
+        for index in 0..<(edge * edge) {
+            seed = seed &* 1_664_525 &+ 1_013_904_223
+            words[index] = seed
+        }
+        guard let noise = context.makeImage() else { throw Failure.fixture }
+        do {
+            _ = try CareScanPDF.render(pageCount: CareDocuments.pdfPageLimit) { _ in (noise, .up) }
+            throw Failure.limit
+        } catch CareDocumentError.tooLarge {}
+    }
+
     private static func verifyPage(_ page: CGPDFPage, size: CGSize, pixels: (Int, Int),
                                    topLeftIsRed: Bool, bottomRightIsRed: Bool) throws {
         let box = page.getBoxRect(.mediaBox)
@@ -89,5 +108,6 @@ enum ScannerChecks {
             throw Failure.archive
         } catch is CancellationError {}
         guard try archive.list().isEmpty else { throw Failure.archive }
+        try checkFileLimit()
     }
 }

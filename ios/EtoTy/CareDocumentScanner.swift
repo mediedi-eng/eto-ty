@@ -130,14 +130,16 @@ struct CareDocumentScanner: UIViewControllerRepresentable {
 
     // Only invoked after the user taps the scan action.
     static func accessMessage() async -> String? {
-        guard VNDocumentCameraViewController.isSupported else {
+        guard VNDocumentCameraViewController.isSupported, AVCaptureDevice.default(for: .video) != nil else {
             return "Сканер недоступен на этом устройстве. Можно выбрать фото или файл."
         }
         let allowed: Bool
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized: allowed = true
         case .notDetermined: allowed = await AVCaptureDevice.requestAccess(for: .video)
-        default: allowed = false
+        case .restricted: return "Камера ограничена на этом устройстве. Можно выбрать фото или файл."
+        case .denied: allowed = false
+        @unknown default: return "Камера недоступна. Можно выбрать фото или файл."
         }
         return allowed ? nil : "Нет доступа к камере. Выбери фото или файл. Доступ можно изменить в настройках iPhone."
     }

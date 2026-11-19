@@ -47,49 +47,7 @@ struct PersonalCareView: View {
         }
         .tint(accent)
         .onAppear { session.refreshDocuments() }
-        .sheet(item: $sheet, onDismiss: session.refreshDocuments) { destination in
-            switch destination {
-            case .schedule(let suggestion):
-                ContactTimeView(previous: suggestion ?? session.plan.nextContact) { date in
-                    session.schedule(at: date)
-                }
-            case .brief:
-                PersonalBriefView(plan: session.plan, documents: session.archivedDocuments)
-            case .intent:
-                CareIntentView(onChoose: chooseRoute)
-            case .prevention:
-                CarePreventionView(onChoose: preventionAction)
-            case .documents(let scope):
-                CareDocumentView(region: scope)
-            case .sourcePDF(let url, let name, let page):
-                NavigationStack {
-                    SourcePDFPreview(source: SourcePDFPage(url: url, page: page))
-                        .navigationTitle(name)
-                        .toolbar { Button("Готово") { sheet = nil } }
-                }
-            case .editSource(let id):
-                if let document = session.archivedDocuments.first(where: { $0.id == id }) {
-                    DocumentEvidenceEditor(document: document, store: CareDocuments())
-                } else {
-                    VStack {
-                        Text("Документ больше недоступен.")
-                        Button("К диалогу") { sheet = nil }
-                    }
-                }
-            case .demo:
-                VStack(spacing: 0) {
-                    HStack {
-                        Label("Вымышленный профиль", systemImage: "person.crop.rectangle.stack").font(.headline)
-                        Spacer()
-                        Button("Закрыть") { sheet = nil }
-                            .accessibilityLabel("Вернуться в личный профиль")
-                    }
-                    .padding()
-                    Divider()
-                    PilotView()
-                }
-            }
-        }
+        .sheet(item: $sheet, onDismiss: session.refreshDocuments, content: sheetContent)
         .quickLookPreview($photoOriginal)
         .alert("Удалить личный профиль из приложения?", isPresented: $confirmingDeletion) {
             Button("Отмена", role: .cancel) {}
@@ -119,6 +77,53 @@ struct PersonalCareView: View {
             sheet = nil
             composing = false
             tab = .chat
+        }
+    }
+
+    @ViewBuilder private func sheetContent(_ destination: CareSheet) -> some View {
+        switch destination {
+        case .schedule(let suggestion):
+            let repeatContact = session.plan.weeklyContact
+            ContactTimeView(previous: suggestion ?? session.plan.nextContact ?? repeatContact?.next(after: Date()),
+                            weekly: repeatContact != nil) { date, weekly in
+                if session.schedule(at: date, weekly: weekly) { return nil }
+                return session.statusText ?? "Не удалось сохранить время. Попробуй ещё раз."
+            }
+        case .brief:
+            PersonalBriefView(session: session)
+        case .intent:
+            CareIntentView(onChoose: chooseRoute)
+        case .prevention:
+            CarePreventionView(onChoose: preventionAction)
+        case .documents(let scope):
+            CareDocumentView(region: scope)
+        case .sourcePDF(let url, let name, let page):
+            NavigationStack {
+                SourcePDFPreview(source: SourcePDFPage(url: url, page: page))
+                    .navigationTitle(name)
+                    .toolbar { Button("Готово") { sheet = nil } }
+            }
+        case .editSource(let id):
+            if let document = session.archivedDocuments.first(where: { $0.id == id }) {
+                DocumentEvidenceEditor(document: document, store: CareDocuments())
+            } else {
+                VStack {
+                    Text("Документ больше недоступен.")
+                    Button("К диалогу") { sheet = nil }
+                }
+            }
+        case .demo:
+            VStack(spacing: 0) {
+                HStack {
+                    Label("Вымышленный профиль", systemImage: "person.crop.rectangle.stack").font(.headline)
+                    Spacer()
+                    Button("Закрыть") { sheet = nil }
+                        .accessibilityLabel("Вернуться в личный профиль")
+                }
+                .padding()
+                Divider()
+                PilotView()
+            }
         }
     }
 
@@ -242,6 +247,22 @@ struct PersonalCareView: View {
             }
             Label("Следующий контакт", systemImage: "calendar").font(.headline)
             Text(contactDescription).font(.subheadline)
+            if let weekly = session.plan.weeklyContact {
+                Label("Каждую неделю · " + weekly.displayText, systemImage: "repeat")
+                    .font(.subheadline)
+                    .accessibilityIdentifier("care.agenda.weekly")
+                if session.plan.hasDueQuestion {
+                    Text("После ответа вернёмся к делу в следующий указанный день недели.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                Button("Отключить повторение") { session.stopWeeklyContacts() }
+                    .accessibilityLabel("Отключить еженедельные вопросы")
+                    .accessibilityHint(session.plan.nextContact == nil
+                        ? "Новые вопросы по этому расписанию приходить не будут."
+                        : "Ближайший назначенный вопрос останется в плане.")
+                    .accessibilityIdentifier("care.agenda.stopWeekly")
+                    .disabled(session.storageUnavailable)
+            }
             if let status = session.notificationStatus, session.plan.nextContact != nil {
                 Text(status).font(.footnote).foregroundStyle(.secondary)
             }
@@ -349,15 +370,7 @@ struct PersonalCareView: View {
         case .prevention:
             sheet = .prevention
         case .visitPreparation:
-            session.refreshDocuments()
-            if session.plan.topic != nil || !session.archivedDocuments.isEmpty {
-                sheet = .brief
-            } else {
-                sheet = nil
-                tab = .chat
-                if draft.isEmpty { draft = "Подготовить вопросы к приёму" }
-                composing = true
-            }
+            openBrief()
         case .reminder:
             if session.plan.topic != nil && !session.plan.isPaused && !session.plan.isClosed {
                 sheet = .schedule(nil)
@@ -584,16 +597,18 @@ private struct CareBubble: View {
 private struct ContactTimeView: View {
     @Environment(\.dismiss) private var dismiss
     @ViewState private var date: Date
-    @ViewState private var invalidDate = false
+    @ViewState private var weekly: Bool
+    @ViewState private var saveIssue: String?
     private let minimum: Date
-    let save: (Date) -> Void
+    let save: (Date, Bool) -> String?
 
-    init(previous: Date?, save: @escaping (Date) -> Void) {
+    init(previous: Date?, weekly: Bool, save: @escaping (Date, Bool) -> String?) {
         let now = Date()
         let earliest = Date(timeIntervalSince1970: (floor(now.timeIntervalSince1970 / 60) + 1) * 60)
         let futureChoice = previous.flatMap { $0 > now ? $0 : nil }
         minimum = min(futureChoice ?? earliest, earliest)
         _date = State(initialValue: futureChoice ?? earliest.addingTimeInterval(3600))
+        _weekly = State(initialValue: weekly)
         self.save = save
     }
 
@@ -603,16 +618,32 @@ private struct ContactTimeView: View {
                 DatePicker("Напомнить", selection: $date, in: minimum..., displayedComponents: [.date, .hourAndMinute])
                 Text("Местное время · " + TimeZone.current.identifier)
                     .font(.footnote).foregroundStyle(.secondary)
-                Button("Сохранить время") {
-                    guard date > Date() else { invalidDate = true; return }
-                    save(date)
-                    dismiss()
+                Section {
+                    Toggle("Каждую неделю", isOn: $weekly)
+                        .accessibilityIdentifier("care.schedule.weekly")
+                } footer: {
+                    if weekly {
+                        let slot = date.formatted(.dateTime.locale(Locale(identifier: "ru_RU")).weekday(.wide).hour().minute())
+                        Text("Каждую неделю · " + slot + ". После твоего ответа вернёмся к делу в следующий такой день. Пока ответа нет, приложение подождёт.")
+                    } else {
+                        Text("Вопрос придёт один раз в выбранное время.")
+                    }
                 }
-                if invalidDate {
-                    Text("Выбранное время уже прошло. Выбери более позднее.").foregroundStyle(.secondary)
+                Button("Сохранить время") {
+                    guard date > Date() else {
+                        saveIssue = "Выбранное время уже прошло. Выбери более позднее."
+                        return
+                    }
+                    saveIssue = save(date, weekly)
+                    if saveIssue == nil { dismiss() }
+                }
+                .accessibilityIdentifier("care.schedule.save")
+                if let saveIssue {
+                    Text(saveIssue).foregroundStyle(.secondary)
                 }
             }
-            .onChange(of: date) { _, _ in invalidDate = false }
+            .onChange(of: date) { _, _ in saveIssue = nil }
+            .onChange(of: weekly) { _, _ in saveIssue = nil }
             .navigationTitle("Следующий контакт")
             .toolbar { Button("Отмена") { dismiss() } }
         }

@@ -14,6 +14,13 @@ enum CareChecks {
         plan.finish()
         precondition(plan == initial, "An empty personal profile has no agreement")
 
+        var noRecords = initial
+        noRecords.receive("У меня пока нет документов.", now: now)
+        precondition(noRecords.topic == nil && noRecords.nextContact == nil)
+        precondition(noRecords.messages.last?.text.contains("один вопрос") == true)
+        noRecords.receive("Обсудить сон на приёме", now: now)
+        precondition(noRecords.topic == "Обсудить сон на приёме")
+
         for request in ["Нужна срочная помощь!", "Как вызвать скорую?", "Please call an ambulance"] {
             var urgent = initial
             urgent.receive(request, now: now)

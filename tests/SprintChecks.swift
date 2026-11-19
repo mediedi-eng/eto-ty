@@ -8,6 +8,7 @@ struct SprintChecks {
         try StorageChecks.run()
         try DocumentChecks.run()
         try DocumentFollowUpChecks.run()
+        try WeeklyCheckInChecks.run()
         try HistoryQueryChecks.run()
         try ScannerChecks.run()
         try PageReaderChecks.run()

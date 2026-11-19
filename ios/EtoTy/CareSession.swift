@@ -75,14 +75,34 @@ final class CareSession: ObservableObject {
         contactSuggestionToken += 1
     }
 
-    func schedule(at date: Date) {
-        guard date > now(), plan.topic != nil, !plan.isClosed, !plan.isPaused else {
+    @discardableResult
+    func schedule(at date: Date, weekly: Bool = false) -> Bool {
+        let instant = now()
+        guard date.timeIntervalSinceReferenceDate.isFinite, date > instant, plan.topic != nil, !plan.isClosed, !plan.isPaused else {
             statusText = "Сначала выбери тему и время в будущем."
-            return
+            return false
         }
-        if apply(requestPermission: true, { $0.schedule(at: date, now: self.now()) }) {
-            suggestedContact = nil
+        guard apply(requestPermission: true, { $0.schedule(at: date, now: instant, weekly: weekly) }) else { return false }
+        suggestedContact = nil
+        return true
+    }
+
+    func stopWeeklyContacts() {
+        apply { $0.stopWeeklyContacts(now: self.now()) }
+    }
+
+    func addVisitQuestion(_ text: String) -> Bool {
+        var inserted = false
+        let saved = apply { inserted = $0.addVisitQuestion(text) }
+        if saved && !inserted {
+            statusText = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Сначала введи вопрос." : "Этот вопрос уже сохранён."
         }
+        return saved && inserted
+    }
+
+    func deleteVisitQuestion(id: UUID) -> Bool {
+        apply { $0.deleteVisitQuestion(id: id) }
     }
 
     func pause() { apply { $0.pause() } }
