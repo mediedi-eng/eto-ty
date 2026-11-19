@@ -154,8 +154,10 @@ final class CareJourneyUITests: XCTestCase {
     private func seedSyntheticDocument(in app: XCUIApplication) {
         app.terminate()
         app.launchEnvironment["ETO_TY_UI_TEST_SEED_DOCUMENT"] = "1"
+        app.launchArguments.append("--eto-ty-ui-test-seed-document")
         app.launch()
         app.launchEnvironment.removeValue(forKey: "ETO_TY_UI_TEST_SEED_DOCUMENT")
+        app.launchArguments.removeAll { $0 == "--eto-ty-ui-test-seed-document" }
         let original = app.buttons.matching(NSPredicate(
             format: "identifier == %@ AND label == %@", "care.history.original", "Открыть оригинал: Example-report.png"
         )).firstMatch
