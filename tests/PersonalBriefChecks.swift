@@ -30,7 +30,32 @@ enum PersonalBriefChecks {
         let agreed = PersonalBrief.text(plan: suggested, documents: [], includeTopic: true, includeAnswer: false)
         precondition(agreed.contains("Согласованное дело в личном плане") && !agreed.contains("со слов пользователя"))
         precondition(!agreed.contains(item.name) && !agreed.contains("Фрагмент документа"))
+        try checkSpecialistSelection(plan: plan, heart: item)
         try checkSavedQuestions()
+    }
+
+    private static func checkSpecialistSelection(plan: CarePlan, heart: CareDocument) throws {
+        let kidneys = CareDocument(id: "kidney-example", name: "Почки — пример.pdf",
+                                   kind: .pdf, imported: heart.imported, region: .kidneys)
+        let other = CareDocument(id: "unassigned-example", name: "Общий пример.pdf",
+                                 kind: .pdf, imported: heart.imported)
+        let archive = [heart, kidneys, other]
+        let selected: Set<String> = [kidneys.id, other.id]
+        precondition(BriefDocumentSelection.chosen(in: archive, selected: []).isEmpty)
+        precondition(BriefDocumentSelection.available(in: archive, area: .kidneys, selected: []) == [kidneys])
+        precondition(BriefDocumentSelection.available(in: archive, area: nil, selected: []) == archive)
+        precondition(BriefDocumentSelection.available(in: archive, area: .heart, selected: selected) == [heart])
+        precondition(BriefDocumentSelection.available(in: archive, area: .kidneys, selected: selected).isEmpty)
+        let chosen = BriefDocumentSelection.chosen(in: archive, selected: selected)
+        precondition(chosen == [kidneys, other])
+        let preview = PersonalBrief.text(plan: plan, documents: chosen, includeTopic: false, includeAnswer: false)
+        let rendered = try VisitPDF.render(preview)
+        let exported = PDFDocument(data: rendered)?.string ?? ""
+        for text in [preview, exported] {
+            precondition(text.contains(kidneys.name) && text.contains(other.name))
+            precondition(!text.contains(heart.name) && !text.contains("Фрагмент документа"))
+        }
+        precondition(BriefDocumentSelection.chosen(in: [heart, other], selected: selected) == [other])
     }
 
     @MainActor

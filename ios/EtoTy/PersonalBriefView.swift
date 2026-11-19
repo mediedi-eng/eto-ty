@@ -11,6 +11,7 @@ struct PersonalBriefView: View {
     @BriefState private var includeTopic = false
     @BriefState private var includeAnswer = false
     @BriefState private var includedIDs = Set<String>()
+    @BriefState private var area: Region?
     @BriefState private var includedQuestions = Set<UUID>()
     @BriefState private var draft = ""
     @FocusState private var typingQuestion: Bool
@@ -110,22 +111,24 @@ struct PersonalBriefView: View {
                     Button("Попробовать открыть архив снова") { session.refreshDocuments() }
                 } else if documents.isEmpty {
                     Text("В списке нет документов для выбора.").foregroundStyle(.secondary)
-                }
-                ForEach(documents) { document in
-                    Toggle(isOn: Binding {
-                        includedIDs.contains(document.id)
-                    } set: { included in
-                        if included { includedIDs.insert(document.id) }
-                        else { includedIDs.remove(document.id) }
-                    }) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(document.name)
-                            if session.activeDocumentSource?.id == document.id {
-                                Label("Источник текущего дела", systemImage: "link")
-                                    .font(.footnote)
-                            }
-                            if let region = document.region { Text(region.rawValue).font(.footnote).foregroundStyle(.secondary) }
+                } else {
+                    Picker("Показать документы", selection: $area) {
+                        Text("Все области").tag(nil as Region?)
+                        ForEach(Region.allCases) { region in
+                            Text(region.rawValue).tag(Optional(region))
                         }
+                    }
+                    if !chosen.isEmpty {
+                        Text("Включены в сводку").font(.subheadline.bold())
+                        ForEach(chosen) { document in documentToggle(document) }
+                    }
+                    let choices = BriefDocumentSelection.available(in: documents, area: area, selected: includedIDs)
+                    if !choices.isEmpty {
+                        Text("Можно добавить").font(.subheadline.bold())
+                        ForEach(choices) { document in documentToggle(document) }
+                    } else if let area {
+                        Text("Больше документов для выбора в области «" + area.rawValue + "» нет.")
+                            .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
             } header: {
@@ -137,6 +140,28 @@ struct PersonalBriefView: View {
                 preview = selectedText
                 errorMessage = nil
             }.disabled(!hasSelection)
+        }
+    }
+
+    private var chosen: [CareDocument] {
+        BriefDocumentSelection.chosen(in: documents, selected: includedIDs)
+    }
+
+    private func documentToggle(_ document: CareDocument) -> some View {
+        Toggle(isOn: Binding {
+            includedIDs.contains(document.id)
+        } set: { included in
+            if included { includedIDs.insert(document.id) }
+            else { includedIDs.remove(document.id) }
+        }) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(document.name)
+                if session.activeDocumentSource?.id == document.id {
+                    Label("Источник текущего дела", systemImage: "link")
+                        .font(.footnote)
+                }
+                if let region = document.region { Text(region.rawValue).font(.footnote).foregroundStyle(.secondary) }
+            }
         }
     }
 
@@ -189,12 +214,12 @@ struct PersonalBriefView: View {
 
     private var hasSelection: Bool {
         (includeTopic && plan.topic != nil) || (includeAnswer && plan.lastAnswer != nil) ||
-        documents.contains { includedIDs.contains($0.id) } ||
+        !chosen.isEmpty ||
         plan.visitQuestions.contains { includedQuestions.contains($0.id) }
     }
 
     private var selectedText: String {
-        PersonalBrief.text(plan: plan, documents: documents.filter { includedIDs.contains($0.id) },
+        PersonalBrief.text(plan: plan, documents: chosen,
                            includeTopic: includeTopic, includeAnswer: includeAnswer, includeQuestionIDs: includedQuestions)
     }
 
