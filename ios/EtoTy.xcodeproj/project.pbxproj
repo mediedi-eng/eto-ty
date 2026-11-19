@@ -4,10 +4,10 @@
  classes = {};
  objectVersion = 77;
  objects = {
-  A00000000000000000000001 = {isa = PBXProject; attributes = {LastSwiftUpdateCheck = 1600; LastUpgradeCheck = 1600;}; buildConfigurationList = A00000000000000000000010; developmentRegion = ru; knownRegions = (ru, en, Base); mainGroup = A00000000000000000000002; preferredProjectObjectVersion = 77; productRefGroup = A00000000000000000000004; projectDirPath = ""; projectRoot = ""; targets = (A00000000000000000000005);};
-  A00000000000000000000002 = {isa = PBXGroup; children = (A00000000000000000000003, A00000000000000000000004); sourceTree = "<group>";};
+  A00000000000000000000001 = {isa = PBXProject; attributes = {LastSwiftUpdateCheck = 1600; LastUpgradeCheck = 1600; TargetAttributes = {B00000000000000000000003 = {TestTargetID = A00000000000000000000005;};};}; buildConfigurationList = A00000000000000000000010; developmentRegion = ru; knownRegions = (ru, en, Base); mainGroup = A00000000000000000000002; preferredProjectObjectVersion = 77; productRefGroup = A00000000000000000000004; projectDirPath = ""; projectRoot = ""; targets = (A00000000000000000000005, B00000000000000000000003);};
+  A00000000000000000000002 = {isa = PBXGroup; children = (A00000000000000000000003, B00000000000000000000001, A00000000000000000000004); sourceTree = "<group>";};
   A00000000000000000000003 = {isa = PBXFileSystemSynchronizedRootGroup; path = EtoTy; sourceTree = "<group>";};
-  A00000000000000000000004 = {isa = PBXGroup; children = (A00000000000000000000006); name = Products; sourceTree = "<group>";};
+  A00000000000000000000004 = {isa = PBXGroup; children = (A00000000000000000000006, B00000000000000000000002); name = Products; sourceTree = "<group>";};
   A00000000000000000000005 = {isa = PBXNativeTarget; buildConfigurationList = A00000000000000000000011; buildPhases = (A00000000000000000000007, A00000000000000000000008, A00000000000000000000009); buildRules = (); dependencies = (); fileSystemSynchronizedGroups = (A00000000000000000000003); name = EtoTy; packageProductDependencies = (); productName = EtoTy; productReference = A00000000000000000000006; productType = "com.apple.product-type.application";};
   A00000000000000000000006 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EtoTy.app; sourceTree = BUILT_PRODUCTS_DIR;};
   A00000000000000000000007 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
@@ -19,6 +19,17 @@
   A00000000000000000000013 = {isa = XCBuildConfiguration; name = Release; buildSettings = {SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SWIFT_VERSION = 5.0; SWIFT_COMPILATION_MODE = wholemodule; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";};};
   A00000000000000000000014 = {isa = XCBuildConfiguration; name = Debug; buildSettings = {CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "Это ты"; INFOPLIST_KEY_UILaunchScreen_Generation = YES; INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = eng.mediedi.etoty.pilot; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; TARGETED_DEVICE_FAMILY = 1;};};
   A00000000000000000000015 = {isa = XCBuildConfiguration; name = Release; buildSettings = {CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "Это ты"; INFOPLIST_KEY_UILaunchScreen_Generation = YES; INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = eng.mediedi.etoty.pilot; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; TARGETED_DEVICE_FAMILY = 1;};};
+  B00000000000000000000001 = {isa = PBXFileSystemSynchronizedRootGroup; path = EtoTyUITests; sourceTree = "<group>";};
+  B00000000000000000000002 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EtoTyUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR;};
+  B00000000000000000000003 = {isa = PBXNativeTarget; buildConfigurationList = B00000000000000000000009; buildPhases = (B00000000000000000000004, B00000000000000000000005, B00000000000000000000006); buildRules = (); dependencies = (B00000000000000000000007); fileSystemSynchronizedGroups = (B00000000000000000000001); name = EtoTyUITests; packageProductDependencies = (); productName = EtoTyUITests; productReference = B00000000000000000000002; productType = "com.apple.product-type.bundle.ui-testing";};
+  B00000000000000000000004 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
+  B00000000000000000000005 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
+  B00000000000000000000006 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
+  B00000000000000000000007 = {isa = PBXTargetDependency; target = A00000000000000000000005; targetProxy = B00000000000000000000008;};
+  B00000000000000000000008 = {isa = PBXContainerItemProxy; containerPortal = A00000000000000000000001; proxyType = 1; remoteGlobalIDString = A00000000000000000000005; remoteInfo = EtoTy;};
+  B00000000000000000000009 = {isa = XCConfigurationList; buildConfigurations = (B00000000000000000000010, B00000000000000000000011); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;};
+  B00000000000000000000010 = {isa = XCBuildConfiguration; name = Debug; buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = eng.mediedi.etoty.pilot.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; TARGETED_DEVICE_FAMILY = 1; TEST_TARGET_NAME = EtoTy;};};
+  B00000000000000000000011 = {isa = XCBuildConfiguration; name = Release; buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = eng.mediedi.etoty.pilot.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; TARGETED_DEVICE_FAMILY = 1; TEST_TARGET_NAME = EtoTy;};};
  };
  rootObject = A00000000000000000000001;
 }
