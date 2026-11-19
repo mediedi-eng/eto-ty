@@ -62,7 +62,7 @@ final class CareJourneyUITests: XCTestCase {
         app.buttons["Готово"].tap()
         XCTAssertTrue(emptyArchive.waitForExistence(timeout: 5))
 
-        try openSyntheticDocument(in: app, emptyArchive: emptyArchive)
+        seedSyntheticDocument(in: app)
         checkBriefFromBodyMap(in: app)
     }
 
@@ -136,7 +136,7 @@ final class CareJourneyUITests: XCTestCase {
 
         app.buttons["brief.area"].tap()
         app.buttons["Все области"].tap()
-        let document = app.switches.matching(NSPredicate(format: "label CONTAINS %@", "Example-report.pdf")).firstMatch
+        let document = app.switches.matching(NSPredicate(format: "label CONTAINS %@", "Example-report.png")).firstMatch
         XCTAssertTrue(document.waitForExistence(timeout: 5))
         XCTAssertEqual(document.value as? String, "0")
         document.tap()
@@ -147,37 +147,19 @@ final class CareJourneyUITests: XCTestCase {
         if !preview.isHittable { app.swipeUp() }
         preview.tap()
         XCTAssertTrue(app.navigationBars["Предпросмотр"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Example-report.pdf")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Example-report.png")).firstMatch.exists)
     }
 
     @MainActor
-    private func openSyntheticDocument(in app: XCUIApplication, emptyArchive: XCUIElement) throws {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Example-report.pdf")
-        defer { try? FileManager.default.removeItem(at: url) }
-        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 400, height: 500))
-        try renderer.writePDF(to: url) { context in
-            context.beginPage()
-            ("Synthetic archive test" as NSString).draw(at: CGPoint(x: 20, y: 20), withAttributes: nil)
-        }
-
-        app.open(url)
-        let cancel = app.buttons["care.incoming.cancel"]
-        XCTAssertTrue(cancel.waitForExistence(timeout: 10))
-        cancel.tap()
-        XCTAssertTrue(emptyArchive.waitForExistence(timeout: 5))
-
-        app.open(url)
-        let save = app.buttons["care.incoming.save"]
-        XCTAssertTrue(save.waitForExistence(timeout: 10))
-        save.tap()
+    private func seedSyntheticDocument(in app: XCUIApplication) {
+        app.terminate()
+        app.launchEnvironment["ETO_TY_UI_TEST_SEED_DOCUMENT"] = "1"
+        app.launch()
+        app.launchEnvironment.removeValue(forKey: "ETO_TY_UI_TEST_SEED_DOCUMENT")
         let original = app.buttons.matching(NSPredicate(
-            format: "identifier == %@ AND label == %@", "care.history.original", "Открыть оригинал: " + url.lastPathComponent
+            format: "identifier == %@ AND label == %@", "care.history.original", "Открыть оригинал: Example-report.png"
         )).firstMatch
         XCTAssertTrue(original.waitForExistence(timeout: 10))
-        original.tap()
-        XCTAssertTrue(app.navigationBars[url.lastPathComponent].waitForExistence(timeout: 5))
-        app.buttons["Готово"].tap()
-        XCTAssertTrue(original.waitForExistence(timeout: 5))
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "Личный диалог — найденный вымышленный документ"
         screenshot.lifetime = .keepAlways

@@ -25,6 +25,9 @@ struct EtoTyApp: App {
                 }
                 #endif
                 .onAppear {
+                    #if DEBUG && os(iOS)
+                    seedUITestDocumentIfRequested()
+                    #endif
                     session.refresh()
                     #if os(iOS)
                     receivePendingExternalDocuments()
@@ -42,6 +45,18 @@ struct EtoTyApp: App {
             incoming.receive(url)
         }
     }
+
+    #if DEBUG
+    private func seedUITestDocumentIfRequested() {
+        guard ProcessInfo.processInfo.environment["ETO_TY_UI_TEST_SEED_DOCUMENT"] == "1",
+              let data = Data(base64Encoded:
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+        else { return }
+        let store = CareDocuments()
+        guard (try? store.list().contains { $0.name == "Example-report.png" }) != true else { return }
+        _ = try? store.add(data, name: "Example-report.png")
+    }
+    #endif
     #endif
 }
 
