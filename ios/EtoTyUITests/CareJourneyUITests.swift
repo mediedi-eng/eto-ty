@@ -27,13 +27,13 @@ final class CareJourneyUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Следующий контакт"].waitForExistence(timeout: 5))
         let weekly = app.switches["care.schedule.weekly"]
         XCTAssertTrue(weekly.waitForExistence(timeout: 5))
-        XCTAssertEqual(weekly.value as? String, "0")
+        waitForValue("0", of: weekly)
         weekly.tap()
-        XCTAssertEqual(weekly.value as? String, "1")
+        waitForValue("1", of: weekly)
         app.buttons["Отмена"].tap()
         chooseTime.tap()
         XCTAssertTrue(weekly.waitForExistence(timeout: 5))
-        XCTAssertEqual(weekly.value as? String, "0")
+        waitForValue("0", of: weekly)
         app.buttons["Отмена"].tap()
         app.terminate()
         app.launch()
@@ -64,6 +64,12 @@ final class CareJourneyUITests: XCTestCase {
 
         try openSyntheticDocument(in: app, emptyArchive: emptyArchive)
         checkBriefFromBodyMap(in: app)
+    }
+
+    private func waitForValue(_ value: String, of element: XCUIElement) {
+        let predicate = NSPredicate(format: "value == %@", value)
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 5), .completed)
     }
 
     @MainActor
