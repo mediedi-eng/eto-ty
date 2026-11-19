@@ -94,13 +94,14 @@ struct CareDocumentView: View {
                             if let evidence = document.evidence, let quote = evidence.quote, let page = evidence.page {
                                 Text("Подтверждённый фрагмент, стр. " + String(page) + ": «" + quote + "»").font(.callout)
                             }
-                            if document.region == nil, let suggestion = CareRegionSuggestion.fromTitle(document.name) {
+                            if document.region == nil, let suggestion = CareRegionSuggestion.hint(
+                                name: document.name, quote: document.evidence?.quote, page: document.evidence?.page) {
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text("Предложено по названию: " + suggestion.rawValue)
+                                    Text(suggestion.explanation)
                                         .font(.caption).foregroundStyle(.secondary)
-                                    Button("Связать") { assign(suggestion, to: document) }
+                                    Button("Связать") { assign(suggestion.region, to: document, ifUnchanged: document) }
                                         .buttonStyle(.borderless).font(.callout)
-                                        .accessibilityLabel("Связать " + document.name + " с областью " + suggestion.rawValue)
+                                        .accessibilityLabel("Связать " + document.name + " с областью " + suggestion.region.rawValue)
                                 }
                             }
                             HStack(spacing: 16) {
@@ -256,12 +257,12 @@ struct CareDocumentView: View {
         if let region, region != document.region { selected = document }
     }
 
-    private func assign(_ region: Region?, to document: CareDocument) {
+    private func assign(_ region: Region?, to document: CareDocument, ifUnchanged expected: CareDocument? = nil) {
         do {
-            try store.assign(region, to: document.id)
+            try store.assign(region, to: document.id, ifUnchanged: expected)
             notice = region.map { "Твоя метка: " + $0.rawValue } ?? "Метка снята."
             reload()
-        } catch { show(error) }
+        } catch { reload(); show(error) }
     }
 
     private func reload() {

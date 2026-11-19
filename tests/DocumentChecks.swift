@@ -74,6 +74,13 @@ enum DocumentChecks {
         let jpeg = try store.add(image(.jpeg), name: "photo")
         let png = try store.add(image(.png), name: "file.jpg")
         guard jpeg.kind == .jpeg, png.kind == .png, try store.list().count == 3 else { throw Failure.invariant }
+        try store.annotate(png.id, studyDate: nil, page: 1, quote: "УЗИ почек")
+        guard let reviewed = try store.list().first(where: { $0.id == png.id }),
+              let hint = CareRegionSuggestion.hint(name: reviewed.name, quote: reviewed.evidence?.quote,
+                                                   page: reviewed.evidence?.page) else { throw Failure.invariant }
+        try store.assign(hint.region, to: png.id, ifUnchanged: reviewed)
+        try expectRejection { try store.assign(.liver, to: png.id, ifUnchanged: reviewed) }
+        guard try store.list().first(where: { $0.id == png.id })?.region == .kidneys else { throw Failure.invariant }
         let path = try store.originalURL(for: first)
         try store.remove(first.id)
         try store.remove(first.id)
