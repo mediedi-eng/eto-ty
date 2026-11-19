@@ -3,3 +3,5 @@
 .env.*
 private/
 local-data/
+DerivedData/
+xcuserdata/
