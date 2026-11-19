@@ -151,8 +151,8 @@ final class CareJourneyUITests: XCTestCase {
         waitForValue("1", of: document)
         if !preview.isHittable { app.swipeUp() }
         preview.tap()
-        XCTAssertTrue(app.navigationBars["Предпросмотр"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Example-report.png")).firstMatch.exists)
+        XCTAssertTrue(app.descendants(matching: .any)["brief.preview.content"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Example-report.png")).firstMatch.waitForExistence(timeout: 5))
     }
 
     private func chooseBriefArea(_ title: String, in app: XCUIApplication) {
