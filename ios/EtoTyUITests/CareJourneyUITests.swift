@@ -28,7 +28,7 @@ final class CareJourneyUITests: XCTestCase {
         let weekly = app.switches["care.schedule.weekly"]
         XCTAssertTrue(weekly.waitForExistence(timeout: 5))
         waitForValue("0", of: weekly)
-        weekly.tap()
+        weekly.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
         waitForValue("1", of: weekly)
         app.buttons["Отмена"].tap()
         chooseTime.tap()
