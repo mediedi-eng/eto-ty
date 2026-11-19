@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Это ты · три экрана</title>
+<style>
+:root{color-scheme:light;--ink:#18332f;--secondary:#47645b;--accent:#146653;--light:#e1f0e8;--border:#cfded4;--paper:#fafcf8;--blue:#406583}
+*{box-sizing:border-box}body{margin:0;background:#eaf0e8;color:var(--ink);font:16px/1.45 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+main{max-width:480px;margin:24px auto;background:var(--paper);border:1px solid var(--border);border-radius:24px;overflow:hidden}
+header,nav{background:white;padding:16px 22px}header{display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid var(--border)}
+header strong{font-size:23px}small,.sub{color:var(--secondary)}small{font-size:13px}
+section{padding:20px 22px;min-height:470px}h1{font-size:30px;margin:0 0 4px;letter-spacing:-.045em}h2{font-size:18px;margin:20px 0 6px}p{margin:6px 0 12px}
+button,select{font:inherit}button{cursor:pointer;color:var(--accent);background:white;border:1px solid var(--border);border-radius:10px;padding:8px 12px}
+button:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
+nav{display:flex;gap:4px;justify-content:space-between;border-top:1px solid var(--border);position:sticky;bottom:0}
+nav button{flex:1;border:0;color:var(--secondary);font-size:15px}nav button[aria-current="page"]{background:var(--light);color:var(--accent);font-weight:700}
+.msg{width:fit-content;max-width:91%;padding:11px 14px;border-radius:16px;background:#eaf0eb;margin:10px 0}.me{background:var(--accent);color:white;margin-left:auto}
+.links{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}.hero{margin:16px 0;padding:16px 18px;background:var(--light);border-radius:16px}
+.large{font-size:25px;font-weight:700;margin:0}.steps{list-style:none;padding:0;margin:12px 0}.steps li{display:flex;align-items:center;gap:10px;padding:6px 0}.dot{width:24px;height:24px;display:grid;place-items:center;border:1px solid var(--border);border-radius:50%;font-size:13px}.done .dot{background:var(--accent);color:white}
+details{margin-top:15px}summary{cursor:pointer;color:var(--accent)}select{padding:6px;border:1px solid var(--border);border-radius:8px;color:var(--ink);background:white}
+.map{position:relative;height:268px;margin-top:10px;background:#eef4ef;border-radius:18px}.map svg{position:absolute;height:100%;width:100%}.map [data-region]{cursor:pointer}.pin{position:absolute;right:4%;min-width:85px;padding:6px 8px;font-size:14px}
+.pin[aria-pressed=true]{border:2px solid var(--blue);font-weight:bold}.card{margin-top:12px;padding:12px 14px;border:1px solid var(--border);border-radius:12px}.card p:last-child{margin-bottom:0}
+[hidden]{display:none!important}@media(max-width:520px){main{margin:0 auto;border:0;border-radius:0;min-height:100dvh;display:flex;flex-direction:column}section{flex:1}nav{padding-bottom:max(12px,env(safe-area-inset-bottom))}}
+</style></head><body><main>
+<header><strong>Это ты</strong><small>Макет · вымышленные данные</small></header>
+<section id="talk"><h1>Диалог</h1><p class="sub">ИИ-помощник · среда, 18 ноября</p>
+<div class="msg">Мы договорились вернуться к вопросу о сне. У тебя уже есть записи за последние ночи?</div>
+<div class="msg me">Да. И нашёл мартовское заключение УЗИ.</div>
+<div class="msg">В заключении есть запись о почках от 12 марта. Я добавил её на карту. По сну пока есть одна запись.</div>
+<div id="extra"></div><div class="links"><button data-goto="map">Показать почки на карте</button><button data-goto="level">На каком я уровне?</button></div>
+</section>
+<section id="level" hidden><h1>Мой уровень</h1><p class="sub">Как устроено моё сопровождение</p>
+<div class="hero" aria-live="polite"><small id="lvl-num"></small><p id="lvl-name" class="large"></p><p id="lvl-reason"></p></div>
+<ol class="steps" id="steps"></ol><p id="next"></p>
+<details><summary>Посмотреть основания</summary><p>По теме сна согласован следующий разговор на пятницу, 20 ноября. В дневнике есть запись за 15 ноября.</p><p id="sync"></p></details>
+<div class="links" id="sources"><button data-add="watch">Добавить записи часов</button><button data-add="diary">Добавить записи дневника</button></div>
+<p id="import-note" class="sub"><small>Демо добавит две вымышленные записи за 16 и 17 ноября.</small></p>
+</section>
+<section id="map" hidden><h1>Карта тела</h1><p class="sub">Какие сведения у меня уже есть</p>
+<div class="map"><svg viewBox="0 0 360 268" aria-hidden="true" preserveAspectRatio="none">
+<g stroke="#a4bdb1" fill="#d7e5db" stroke-width="1.5">
+<ellipse cx="141" cy="25" rx="15" ry="20"/>
+<path d="M132 44 Q132 51 123 53 Q104 54 97 65 L74 126 Q70 138 77 139 Q83 140 86 132 L105 91 Q110 108 113 123 Q113 134 107 148 Q103 163 109 180 L118 222 L120 258 Q121 264 131 262 L136 218 L140 186 L143 174 L148 215 L153 261 Q161 265 166 258 L165 221 L174 181 Q180 162 174 147 Q168 133 169 123 L177 93 L197 132 Q201 140 207 137 Q211 134 208 125 L185 66 Q180 56 163 54 Q151 52 151 44 Z"/>
+</g>
+<path data-region="heart" d="M151 85 C143 79 139 90 149 100 C158 94 165 82 155 84 Z" fill="#537795"/>
+<path data-region="liver" d="M115 109 Q125 99 148 107 L145 113 Q131 115 117 122 Z" fill="#9eafa4"/>
+<path data-region="kidneys" d="M124 123 C115 120 115 139 124 136 Q128 133 124 130 Q129 126 124 123 Z M157 123 C166 120 166 139 157 136 Q153 133 157 130 Q152 126 157 123 Z" fill="#537795"/>
+<g fill="none" stroke="#789186" stroke-width="1.1"><path d="M157 90 L194 76 H244"/><path d="M143 110 H244"/><path d="M162 130 L192 146 H244"/></g></svg>
+<button class="pin" style="top:21%" data-organ="heart">Сердце</button><button class="pin" style="top:34%" data-organ="liver">Печень</button><button class="pin" style="top:47%" data-organ="kidneys">Почки</button></div>
+<p><small>Синий — есть материал · серый — пока без записей</small></p>
+<div class="card" aria-live="polite"><strong id="organ-name"></strong><p id="organ-copy"></p><details id="source" hidden><summary>Открыть фрагмент источника</summary><p id="excerpt"></p></details></div>
+<div class="links"><button id="ask">Обсудить в диалоге</button></div></section>
+<nav aria-label="Основные экраны"><button data-view="talk">Диалог</button><button data-view="level">Мой уровень</button><button data-view="map">Карта тела</button></nav></main>
+<script>
+const $ = id => document.getElementById(id);
+const titles = ['На связи','Есть исходная картина','Видна динамика','План обновлён по результату'];
+const organs = {
+  heart: ['Сердце','Есть ЭКГ от 2 ноября. В заключении записано обсудить результат на приёме 20 ноября. Это срок обсуждения.'],
+  liver: ['Печень','В этом профиле пока нет материалов, привязанных к печени.'],
+  kidneys: ['Почки','Одно заключение УЗИ. Исследование — 12 марта 2026 года, документ добавлен 18 ноября. Срок пересмотра не указан.']
+};
+let imported = '', selected = 'kidneys';
+function go(id) {
+  for (const key of ['talk','level','map']) $(key).hidden = key !== id;
+  document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-current', b.dataset.view === id ? 'page':'false'));
+  window.scrollTo(0,0);
+}
+function chooseOrgan(key) {
+  selected=key;
+  $('organ-name').textContent=organs[key][0]; $('organ-copy').textContent=organs[key][1];
+  $('source').hidden=key==='liver'; $('source').open=false;
+  $('excerpt').textContent=key==='heart'?'Заключение · 2 ноября 2026 г. · стр. 2. «Обсудить результат ЭКГ на приёме 20 ноября».':key==='kidneys'?'УЗИ · 12 марта 2026 г. · стр. 1. В вымышленном заключении есть раздел «Почки». Дата следующего исследования отсутствует.':'';
+  document.querySelectorAll('[data-organ]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.organ===key)));
+}
+function renderLevel() {
+  const current=imported ? 3 : 2;
+  $('lvl-num').textContent='Уровень '+current+' из 4';
+  $('lvl-name').textContent=titles[current-1];
+  $('lvl-reason').textContent=imported ? 'По теме сна появились две сопоставимые записи из одного источника. На пятницу согласован разговор.' : 'По теме сна есть исходная запись и согласован следующий разговор.';
+  $('steps').replaceChildren();
+  titles.forEach((name,i)=>{const li=document.createElement('li'); li.className=i<current?'done':'';
+    const marker=document.createElement('span'); marker.className='dot'; marker.textContent=String(i+1);
+    li.append(marker,document.createTextNode(name+(i+1===current?' · сейчас':''))); $('steps').append(li);});
+  $('next').textContent=imported?'Дальше — обсудить результат и решить, как вести тему дальше.':'Динамику можно увидеть по нескольким сопоставимым записям из дневника или с часов.';
+  $('sync').textContent=imported?'16 и 17 ноября · '+(imported==='watch'?'часы':'дневник')+' · записи получены.':'Других записей по этой теме пока нет.';
+  $('sources').hidden=!!imported; $('import-note').hidden=!!imported;
+}
+function say(text,user=false){const node=document.createElement('div');node.className=user?'msg me':'msg';node.textContent=text;$('extra').append(node);}
+document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>go(b.dataset.view));
+document.querySelectorAll('[data-goto]').forEach(b=>b.onclick=()=>{if(b.dataset.goto==='map') chooseOrgan('kidneys');go(b.dataset.goto);});
+document.querySelectorAll('[data-organ]').forEach(b=>b.onclick=()=>chooseOrgan(b.dataset.organ));
+document.querySelectorAll('[data-region]').forEach(region=>region.onclick=()=>chooseOrgan(region.dataset.region));
+document.querySelectorAll('[data-add]').forEach(b=>b.onclick=()=>{
+  if(imported) return;
+  imported=b.dataset.add; renderLevel();
+  say('Появились ещё две записи о сне. Теперь записи за 16 и 17 ноября можно сравнить. Вернёмся к этому в пятницу.');
+});
+$('ask').onclick=()=>{say('Покажи, какие материалы есть по этой теме: '+organs[selected][0].toLowerCase()+'.',true);say(organs[selected][1]);go('talk');};
+chooseOrgan('kidneys');renderLevel();go('talk');
+</script></body></html>
