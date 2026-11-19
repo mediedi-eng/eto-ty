@@ -35,10 +35,4 @@ db-check:
 	sh tests/database.sh
 
 evidence-check:
-	mkdir -p "$(BUILD)/modules"
-	$(SWIFTC) ios/EtoTy/PilotProfile.swift ios/EtoTy/CareDocument.swift \
-		ios/EtoTy/CareRegionSuggestion.swift ios/EtoTy/CareMapCoverage.swift \
-		ios/EtoTy/BriefDocumentSelection.swift tests/RegionSuggestionChecks.swift \
-		tests/MapCoverageChecks.swift tests/VisitSourceChecks.swift tests/portable/main.swift \
-		-o "$(BUILD)/evidence-check"
-	"$(BUILD)/evidence-check"
+	sh tests/portable/check.sh

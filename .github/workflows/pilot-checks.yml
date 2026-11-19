@@ -27,7 +27,7 @@ jobs:
       - name: Parse iPhone app and UI-test sources
         run: swiftc -frontend -parse ios/EtoTy/*.swift ios/EtoTyUITests/*.swift
       - name: Test source confirmation, body map and visit selection
-        run: make evidence-check
+        run: sh tests/portable/check.sh
   database:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
