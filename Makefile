@@ -8,6 +8,7 @@ SWIFTC := swiftc -module-cache-path "$(BUILD)/modules"
 check: $(BUILD)/core-check $(BUILD)/personal-check
 	python3 -B -m unittest discover -s tests -p test_ios_smoke_result.py
 	plutil -lint ios/EtoTy.xcodeproj/project.pbxproj
+	plutil -lint ios/DocumentTypes.plist
 	xmllint --noout ios/EtoTy.xcodeproj/xcshareddata/xcschemes/EtoTy.xcscheme
 	$(SWIFTC) -parse-as-library -typecheck ios/EtoTy/*.swift
 	"$(BUILD)/core-check"
