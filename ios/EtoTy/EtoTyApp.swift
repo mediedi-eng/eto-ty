@@ -48,12 +48,18 @@ struct EtoTyApp: App {
 
     #if DEBUG
     private func seedUITestDocumentIfRequested() {
-        guard ProcessInfo.processInfo.environment["ETO_TY_UI_TEST_SEED_DOCUMENT"] == "1",
-              let data = Data(base64Encoded:
-                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
-        else { return }
+        let process = ProcessInfo.processInfo
+        guard process.environment["ETO_TY_UI_TEST_SEED_DOCUMENT"] == "1" ||
+                process.arguments.contains("--eto-ty-ui-test-seed-document") else { return }
         let store = CareDocuments()
         guard (try? store.list().contains { $0.name == "Example-report.png" }) != true else { return }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 32, height: 32), format: format)
+        let data = renderer.pngData { context in
+            context.cgContext.setFillColor(UIColor.systemTeal.cgColor)
+            context.cgContext.fill(CGRect(x: 0, y: 0, width: 32, height: 32))
+        }
         _ = try? store.add(data, name: "Example-report.png")
     }
     #endif
