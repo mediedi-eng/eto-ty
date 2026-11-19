@@ -136,6 +136,7 @@ struct PersonalBriefView: View {
                     } else if let area {
                         Text("По области «" + area.rawValue + "» больше нечего добавить.")
                             .font(.footnote).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("brief.area.empty")
                     }
                 }
             } header: {
