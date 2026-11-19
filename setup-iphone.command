@@ -116,8 +116,13 @@ if [ "$mode" = --smoke ]; then
     simulator=$(xcrun simctl create "EtoTy smoke $$" "$device_type" "$runtime")
     trap 'xcrun simctl shutdown "$simulator" >/dev/null 2>&1 || true; xcrun simctl delete "$simulator" >/dev/null 2>&1 || true' 0
     trap 'exit 1' HUP INT TERM
-    run_xcodebuild -destination "platform=iOS Simulator,id=$simulator" \
+    mkdir -p local-data/ios-smoke
+    result_dir=$(mktemp -d "$PWD/local-data/ios-smoke/run.XXXXXX")
+    result_bundle="$result_dir/Journey.xcresult"
+    printf 'Отчёт этого запуска XCTest: %s\n' "$result_bundle"
+    run_xcodebuild -resultBundlePath "$result_bundle" -destination "platform=iOS Simulator,id=$simulator" \
         -parallel-testing-enabled NO -only-testing:EtoTyUITests test
+    python3 scripts/check_ios_smoke_result.py "$result_bundle"
     exit 0
 fi
 
