@@ -18,13 +18,31 @@ struct EtoTyApp: App {
                 #if os(iOS)
                 .background(SnapshotShield().frame(width: 0, height: 0))
                 .onOpenURL { url in incoming.receive(url) }
+                .onReceive(NotificationCenter.default.publisher(
+                    for: CareNotificationBootstrap.externalDocumentDidOpen
+                )) { _ in
+                    receivePendingExternalDocuments()
+                }
                 #endif
-                .onAppear { session.refresh() }
+                .onAppear {
+                    session.refresh()
+                    #if os(iOS)
+                    receivePendingExternalDocuments()
+                    #endif
+                }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active { session.refresh() }
                 }
         }
     }
+
+    #if os(iOS)
+    private func receivePendingExternalDocuments() {
+        for url in CareNotificationBootstrap.takeExternalDocuments() {
+            incoming.receive(url)
+        }
+    }
+    #endif
 }
 
 
