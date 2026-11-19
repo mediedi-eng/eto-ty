@@ -7,13 +7,14 @@ private enum CareTab { case chat, level, map }
 
 private enum CareSheet: Hashable, Identifiable {
     case schedule(Date?), documents(Region?), prevention, intent, brief, demo
-    case sourcePDF(URL, String, Int), editSource(String)
+    case sourcePDF(URL, String, Int), editSource(String), incoming
 
     var id: Self { self }
 }
 
 struct PersonalCareView: View {
     @ObservedObject var session: CareSession
+    @ObservedObject var incoming: CareIncomingDocument
     @ViewState private var tab = CareTab.chat
     @ViewState private var sheet: CareSheet?
     @ViewState private var draft = ""
@@ -47,11 +48,18 @@ struct PersonalCareView: View {
         }
         .tint(accent)
         .onAppear { session.refreshDocuments() }
-        .sheet(item: $sheet, onDismiss: session.refreshDocuments, content: sheetContent)
+        .sheet(item: $sheet, onDismiss: {
+            session.refreshDocuments()
+            presentIncomingWhenReady()
+        }, content: sheetContent)
         .quickLookPreview($photoOriginal)
+        .onChange(of: incoming.offer?.id, initial: true) { _, _ in presentIncomingWhenReady() }
+        .onChange(of: photoOriginal) { _, _ in presentIncomingWhenReady() }
+        .onChange(of: confirmingDeletion) { _, _ in presentIncomingWhenReady() }
         .alert("Удалить личный профиль из приложения?", isPresented: $confirmingDeletion) {
             Button("Отмена", role: .cancel) {}
             Button("Удалить", role: .destructive) {
+                incoming.dismiss()
                 session.deleteProfile()
                 sourceIssue = nil
                 photoOriginal = nil
@@ -74,14 +82,25 @@ struct PersonalCareView: View {
         .onChange(of: session.openChatToken) { _, _ in
             confirmingDeletion = false
             photoOriginal = nil
-            sheet = nil
+            if sheet != .incoming { sheet = nil }
             composing = false
             tab = .chat
         }
     }
 
+    private func presentIncomingWhenReady() {
+        guard incoming.offer != nil, sheet == nil, photoOriginal == nil, !confirmingDeletion else { return }
+        composing = false
+        sheet = .incoming
+    }
+
     @ViewBuilder private func sheetContent(_ destination: CareSheet) -> some View {
         switch destination {
+        case .incoming:
+            CareIncomingDocumentView(incoming: incoming, storageAvailable: !session.storageUnavailable) { document in
+                sheet = nil
+                if let document { session.didImportExternalDocument(document) }
+            }
         case .schedule(let suggestion):
             let repeatContact = session.plan.weeklyContact
             ContactTimeView(previous: suggestion ?? session.plan.nextContact ?? repeatContact?.next(after: Date()),
@@ -94,7 +113,10 @@ struct PersonalCareView: View {
         case .intent:
             CareIntentView(onChoose: chooseRoute)
         case .prevention:
-            CarePreventionView(onChoose: preventionAction)
+            PersonalPreventionView(session: session, onExampleChoose: preventionAction) {
+                sheet = nil
+                tab = .chat
+            }
         case .documents(let scope):
             CareDocumentView(region: scope)
         case .sourcePDF(let url, let name, let page):
@@ -132,7 +154,7 @@ struct PersonalCareView: View {
             Button(action: openBrief) { Label("Сводка к приёму", systemImage: "doc.richtext") }
                 .disabled(session.storageUnavailable)
             Button { sheet = .intent } label: { Label("Подобрать раздел по фразе", systemImage: "text.magnifyingglass") }
-            Button { sheet = .prevention } label: { Label("Справочник профилактики", systemImage: "book") }
+            Button { sheet = .prevention } label: { Label("Подготовиться к профилактическому приёму", systemImage: "book") }
             Button { sheet = .documents(nil) } label: { Label("Мои документы", systemImage: "folder") }
                 .disabled(session.storageUnavailable)
             Button { sheet = .demo } label: { Label("Посмотреть вымышленный пример", systemImage: "person.crop.rectangle.stack") }
@@ -158,9 +180,10 @@ struct PersonalCareView: View {
                             CareBubble(message: message, accent: accent)
                                 .id(message.id)
                         }
-                        if !session.plan.isAskingForUrgentHelp && (session.plan.topic == nil || session.plan.isDiscussingPrevention) && !session.storageUnavailable {
+                        if !session.plan.isAskingForUrgentHelp && !session.storageUnavailable {
                             Button("Что проверить?") { sheet = .prevention }
                                 .buttonStyle(.bordered)
+                                .accessibilityIdentifier("care.preparation.open")
                         }
                         if session.plan.topic != nil && !session.plan.isAskingForUrgentHelp {
                             agenda
@@ -181,6 +204,13 @@ struct PersonalCareView: View {
                         if let suggestion = session.documentSuggestion {
                             followUpCard(suggestion)
                         }
+                        if let id = session.lastExternalDocumentID, id != session.documentSuggestion?.documentID,
+                           let document = session.archivedDocuments.first(where: { $0.id == id }) {
+                            VStack(alignment: .leading) {
+                                Text("Документ в архиве").font(.headline)
+                                sourceButton(id: id, name: document.name, page: document.evidence?.page)
+                            }
+                        }
                         Color.clear.frame(height: 1).id("latest").accessibilityHidden(true)
                     }.padding()
                 }
@@ -192,6 +222,7 @@ struct PersonalCareView: View {
                 .onChange(of: session.documentSuggestion?.id) { _, newID in
                     if newID != nil { proxy.scrollTo("latest", anchor: .bottom) }
                 }
+                .onChange(of: session.openChatToken) { _, _ in proxy.scrollTo("latest", anchor: .bottom) }
             }
             Divider()
             HStack(alignment: .bottom, spacing: 8) {
@@ -382,12 +413,15 @@ struct PersonalCareView: View {
         }
     }
 
-    private var preventionAction: ((String) -> Void)? {
-        guard !session.storageUnavailable, session.plan.topic == nil || session.plan.isClosed else { return nil }
+    private var preventionAction: ((String) -> Bool)? {
+        guard !session.storageUnavailable, session.plan.canStartPreparationGoal else { return nil }
         return { goal in
-            guard session.plan.topic == nil || session.plan.isClosed else { return }
+            guard session.plan.canStartPreparationGoal else { return false }
             session.send(goal)
+            guard session.plan.topic == goal, !session.plan.isClosed else { return false }
+            sheet = nil
             tab = .chat
+            return true
         }
     }
 
@@ -414,20 +448,11 @@ struct PersonalCareView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 sessionFeedback
-                if let document = levelEvidence, let area = document.region {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Уровень 2").font(.title.weight(.bold))
-                        Text("Есть исходная картина").font(.headline).foregroundStyle(accent)
-                        Text("В области «" + area.rawValue + "» есть датированная запись, которую ты сверил с оригиналом.")
-                    }
-                    Button { openOriginal(id: document.id, page: document.evidence?.page) } label: { DocumentSourceRow(document: document) }
-                        .buttonStyle(.plain)
-                } else if session.plan.topic != nil {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Уровень 1").font(.title.weight(.bold))
-                        Text("На связи").font(.headline).foregroundStyle(accent)
-                        Text("Ты поручил приложению тему. Её можно продолжить в диалоге.")
-                    }
+                if session.archiveAvailable {
+                    mapProgress
+                } else {
+                    Label("Архив сейчас недоступен. Уровень изученности обновится после чтения документов.", systemImage: "folder.badge.questionmark")
+                    Button("Повторить") { session.refresh() }
                 }
                 if let topic = session.plan.topic {
                     Divider()
@@ -440,7 +465,7 @@ struct PersonalCareView: View {
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                     agenda
-                } else if levelEvidence == nil {
+                } else if session.archiveAvailable && session.archivedDocuments.isEmpty {
                     ContentUnavailableView {
                         Label("Пока нет темы", systemImage: "bubble.left")
                     } description: {
@@ -454,9 +479,39 @@ struct PersonalCareView: View {
         .onAppear(perform: session.refreshDocuments)
     }
 
-    private var levelEvidence: CareDocument? {
-        session.archivedDocuments.first { doc in
-            doc.region != nil && doc.evidence?.studyDate != nil && !(doc.evidence?.quote?.isEmpty ?? true)
+    private var mapProgress: some View {
+        let rows = Region.allCases.map { CareMapRegion($0, documents: session.archivedDocuments) }
+        let dated = rows.compactMap(\.latestDatedSource)
+        return VStack(alignment: .leading, spacing: 10) {
+            if let document = dated.max(by: CareMapRegion.earlierStudy) {
+                Text("Уровень 2 · Есть датированный источник").font(.title2.bold())
+                Text("Последнее исследование среди сверенных фрагментов")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                Button { openOriginal(id: document.id, page: document.evidence?.page) } label: {
+                    DocumentSourceRow(document: document)
+                }.buttonStyle(.plain)
+            } else if !session.archivedDocuments.isEmpty || session.plan.topic != nil {
+                Text("Уровень 1 · Начало истории").font(.title2.bold())
+                Text("Для уровня 2 привяжи документ к области карты и сверь в нём фрагмент с датой исследования.")
+                    .font(.callout)
+            }
+            Text("Области со сверенным фрагментом и датой: " + String(dated.count) + " из " + String(rows.count))
+                .font(.headline)
+            ForEach(rows) { row in
+                Button {
+                    region = row.area
+                    tab = .map
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.area.rawValue)
+                            Text(row.summary).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").accessibilityHidden(true)
+                    }.frame(minHeight: 44)
+                }.buttonStyle(.plain)
+            }
         }
     }
 
@@ -486,11 +541,9 @@ struct PersonalCareView: View {
                 Divider()
                 Text(region.rawValue).font(.title2.weight(.semibold))
                 if session.archiveAvailable {
-                    let linked = session.archivedDocuments.filter { $0.region == region }
-                    if linked.isEmpty {
-                        Text("Связанных документов пока нет.").foregroundStyle(.secondary)
-                    }
-                    ForEach(linked) { document in
+                    let coverage = CareMapRegion(region, documents: session.archivedDocuments)
+                    Text(coverage.summary).font(.subheadline).foregroundStyle(.secondary)
+                    ForEach(coverage.documents) { document in
                         Button { openOriginal(id: document.id, page: document.evidence?.page) } label: {
                             DocumentSourceRow(document: document)
                         }.buttonStyle(.plain)

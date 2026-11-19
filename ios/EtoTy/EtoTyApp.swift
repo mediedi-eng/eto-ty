@@ -9,13 +9,15 @@ struct EtoTyApp: App {
     @UIApplicationDelegateAdaptor(CareNotificationBootstrap.self) private var notificationBootstrap
     #endif
     @StateObject private var session = CareSession()
+    @StateObject private var incoming = CareIncomingDocument()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
-            PersonalCareView(session: session)
+            PersonalCareView(session: session, incoming: incoming)
                 #if os(iOS)
                 .background(SnapshotShield().frame(width: 0, height: 0))
+                .onOpenURL { url in incoming.receive(url) }
                 #endif
                 .onAppear { session.refresh() }
                 .onChange(of: scenePhase) { _, phase in

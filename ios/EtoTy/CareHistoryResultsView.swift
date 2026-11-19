@@ -32,6 +32,7 @@ struct CareHistoryResultsView: View {
                         }
                         Button("Открыть оригинал") { onOpen(document) }
                             .accessibilityLabel("Открыть оригинал: " + document.name)
+                            .accessibilityIdentifier("care.history.original")
                     }.font(.caption)
                 }
                 if matches.count > 3 {
@@ -44,6 +45,7 @@ struct CareHistoryResultsView: View {
         .padding()
         .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 14))
         .onChange(of: query) { _, _ in expanded = false }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("care.history.results")
     }
 }

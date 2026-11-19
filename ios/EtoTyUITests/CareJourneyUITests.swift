@@ -1,8 +1,9 @@
+import UIKit
 import XCTest
 
 final class CareJourneyUITests: XCTestCase {
     @MainActor
-    func testPersonalConversationSurvivesRelaunch() {
+    func testPersonalConversationSurvivesRelaunch() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launch()
@@ -63,8 +64,40 @@ final class CareJourneyUITests: XCTestCase {
         }
         app.buttons["Готово"].tap()
         XCTAssertTrue(emptyArchive.waitForExistence(timeout: 5))
+
+        try openSyntheticDocument(in: app, emptyArchive: emptyArchive)
+    }
+
+    @MainActor
+    private func openSyntheticDocument(in app: XCUIApplication, emptyArchive: XCUIElement) throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Example-report.pdf")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 400, height: 500))
+        try renderer.writePDF(to: url) { context in
+            context.beginPage()
+            ("Synthetic archive test" as NSString).draw(at: CGPoint(x: 20, y: 20), withAttributes: nil)
+        }
+
+        app.open(url)
+        let cancel = app.buttons["care.incoming.cancel"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 10))
+        cancel.tap()
+        XCTAssertTrue(emptyArchive.waitForExistence(timeout: 5))
+
+        app.open(url)
+        let save = app.buttons["care.incoming.save"]
+        XCTAssertTrue(save.waitForExistence(timeout: 10))
+        save.tap()
+        let original = app.buttons.matching(NSPredicate(
+            format: "identifier == %@ AND label == %@", "care.history.original", "Открыть оригинал: " + url.lastPathComponent
+        )).firstMatch
+        XCTAssertTrue(original.waitForExistence(timeout: 10))
+        original.tap()
+        XCTAssertTrue(app.navigationBars[url.lastPathComponent].waitForExistence(timeout: 5))
+        app.buttons["Готово"].tap()
+        XCTAssertTrue(original.waitForExistence(timeout: 5))
         let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.name = "Личный диалог — поиск в пустом архиве"
+        screenshot.name = "Личный диалог — найденный вымышленный документ"
         screenshot.lifetime = .keepAlways
         add(screenshot)
     }

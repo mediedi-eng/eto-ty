@@ -17,6 +17,7 @@ final class CareSession: ObservableObject {
     @Published private(set) var storageUnavailable = false
     @Published private(set) var notificationStatus: String?
     @Published private(set) var openChatToken = 0
+    @Published private(set) var lastExternalDocumentID: String?
     @Published private(set) var suggestedContact: Date?
     @Published private(set) var contactSuggestionToken = 0
     @Published private(set) var archivedDocuments: [CareDocument] = []
@@ -91,6 +92,24 @@ final class CareSession: ObservableObject {
         apply { $0.stopWeeklyContacts(now: self.now()) }
     }
 
+    @discardableResult
+    func setPressureRecord(_ value: CarePressureRecord?) -> Bool {
+        apply { $0.setPressureRecord(value) }
+    }
+
+    @discardableResult
+    func setPressureContext(_ value: CarePressureContext?) -> Bool {
+        apply { $0.setPressureContext(value) }
+    }
+
+    @discardableResult
+    func startPreparationGoal(_ displayed: CarePreparationStep) -> Bool {
+        var started = false
+        let saved = apply { started = $0.startPreparationGoal(displayed, now: self.now()) }
+        if saved && !started { statusText = "Проверь текущий шаг и открытое дело." }
+        return saved && started
+    }
+
     func addVisitQuestion(_ text: String) -> Bool {
         var inserted = false
         let saved = apply { inserted = $0.addVisitQuestion(text) }
@@ -118,6 +137,12 @@ final class CareSession: ObservableObject {
     }
 
     func refreshDocuments() { refreshArchive(andDelivery: false) }
+
+    func didImportExternalDocument(_ document: CareDocument) {
+        refreshDocuments()
+        lastExternalDocumentID = document.id
+        openChatToken += 1
+    }
 
     func originalURL(for document: CareDocument) throws -> URL {
         try documents.originalURL(for: document)
@@ -173,6 +198,7 @@ final class CareSession: ObservableObject {
             return
         }
         plan = CarePlan()
+        lastExternalDocumentID = nil
         archivedDocuments = []
         archiveAvailable = true
         suggestedContact = nil

@@ -1,5 +1,6 @@
 import CoreGraphics
 import CryptoKit
+import Darwin
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
@@ -92,6 +93,10 @@ struct CareDocuments {
     static func loadSelectedFile(_ url: URL) throws -> Data {
         guard url.startAccessingSecurityScopedResource() else { return try boundedRead(url) }
         defer { url.stopAccessingSecurityScopedResource() }
+        return try coordinatedRead(url)
+    }
+
+    static func coordinatedRead(_ url: URL) throws -> Data {
         var coordinationError: NSError?
         var result: Result<Data, Error>?
         NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinationError) { coordinated in
@@ -103,11 +108,19 @@ struct CareDocuments {
     }
 
     static func boundedRead(_ url: URL) throws -> Data {
-        let info = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey])
-        guard info.isRegularFile == true, info.isSymbolicLink != true else { throw CareDocumentError.invalid }
-        if let size = info.fileSize, size > pdfLimit { throw CareDocumentError.tooLarge }
-        let file = try FileHandle(forReadingFrom: url)
+        try boundedRead(url, matching: nil)
+    }
+
+    // Check the opened descriptor so a replaced path cannot change the file after validation.
+    static func boundedRead(_ url: URL, matching identity: (dev_t, ino_t)?) throws -> Data {
+        let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard descriptor >= 0 else { throw CareDocumentError.unavailable }
+        let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         defer { try? file.close() }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { throw CareDocumentError.invalid }
+        if let identity, (info.st_dev, info.st_ino) != identity { throw CareDocumentError.unavailable }
+        guard info.st_size <= pdfLimit else { throw CareDocumentError.tooLarge }
         var data = Data()
         while let chunk = try file.read(upToCount: 256 * 1024), !chunk.isEmpty {
             guard chunk.count <= pdfLimit - data.count else { throw CareDocumentError.tooLarge }

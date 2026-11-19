@@ -78,6 +78,36 @@ struct CarePlan: Codable, Equatable {
     private var followUpDecisions: [String: [String: CareFollowUpDecision]]?
     private var savedVisitQuestions: [CareVisitQuestion]?
 
+    private var pressurePreparation: CarePreventionPreparation?
+
+    var preparation: CarePreventionPreparation { pressurePreparation ?? CarePreventionPreparation() }
+
+    mutating func setPressureRecord(_ value: CarePressureRecord?) {
+        var updated = preparation
+        updated.record = value
+        pressurePreparation = updated == CarePreventionPreparation() ? nil : updated
+    }
+
+    mutating func setPressureContext(_ value: CarePressureContext?) {
+        var updated = preparation
+        updated.context = value
+        pressurePreparation = updated == CarePreventionPreparation() ? nil : updated
+    }
+
+    var canStartPreparationGoal: Bool {
+        (topic == nil || isClosed) && !isPaused && !hasDueQuestion && !isAskingForUrgentHelp
+    }
+
+    @discardableResult
+    mutating func startPreparationGoal(_ displayed: CarePreparationStep, now: Date = Date()) -> Bool {
+        guard canStartPreparationGoal, preparation.step == displayed else { return false }
+        topic = displayed.action
+        isClosed = false
+        lastAnswer = nil
+        reply("В план добавлено дело «" + displayed.action + "». Если захочешь, выбери время для разговора.", at: now)
+        return true
+    }
+
     var visitQuestions: [CareVisitQuestion] { savedVisitQuestions ?? [] }
 
     @discardableResult
@@ -215,6 +245,18 @@ struct CarePlan: Codable, Equatable {
                 return
             default: break
             }
+        }
+
+        // A request to open preparation is not a health goal or an answer to an outstanding question.
+        let preparationRequests = [
+            "что проверить", "что мне проверить", "что стоит проверить", "что проверить для профилактики",
+            "что мне проверить для профилактики", "какие обследования сейчас имеют смысл",
+            "с чего начать профилактику", "открой план профилактики", "покажи план профилактики"
+        ]
+        if preparationRequests.contains(command) {
+            messages.append(message)
+            reply("В «Что проверить?» можно подготовить один шаг к визиту. Начнём с давления: посмотрим, какие записи у тебя уже есть.", at: now)
+            return
         }
 
         // Put an overdue question before the user's arrival. An explicit stop
