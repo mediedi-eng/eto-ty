@@ -66,6 +66,37 @@ final class CareJourneyUITests: XCTestCase {
         XCTAssertTrue(emptyArchive.waitForExistence(timeout: 5))
 
         try openSyntheticDocument(in: app, emptyArchive: emptyArchive)
+        checkBriefFromBodyMap(in: app)
+    }
+
+    @MainActor
+    private func checkBriefFromBodyMap(in app: XCUIApplication) {
+        app.tabBars.buttons["Карта тела"].tap()
+        app.buttons["Почки"].tap()
+        let brief = app.buttons["Сводка к приёму"]
+        if !brief.isHittable { app.swipeUp() }
+        brief.tap()
+
+        let empty = app.staticTexts["По области «Почки» больше нечего добавить."]
+        if !empty.isHittable { app.swipeUp() }
+        XCTAssertTrue(empty.waitForExistence(timeout: 5))
+        let preview = app.buttons["brief.preview"]
+        XCTAssertFalse(preview.isEnabled)
+
+        app.buttons["brief.area"].tap()
+        app.buttons["Все области"].tap()
+        let document = app.switches.matching(NSPredicate(format: "label CONTAINS %@", "Example-report.pdf")).firstMatch
+        XCTAssertTrue(document.waitForExistence(timeout: 5))
+        XCTAssertEqual(document.value as? String, "0")
+        document.tap()
+        XCTAssertTrue(preview.isEnabled)
+        app.buttons["brief.area"].tap()
+        app.buttons["Почки"].tap()
+        XCTAssertEqual(document.value as? String, "1")
+        if !preview.isHittable { app.swipeUp() }
+        preview.tap()
+        XCTAssertTrue(app.navigationBars["Предпросмотр"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Example-report.pdf")).firstMatch.exists)
     }
 
     @MainActor

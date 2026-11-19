@@ -16,6 +16,18 @@ jobs:
       - run: make check
       - run: make ios-build
       - run: make ios-smoke
+  evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    container: swift:6.2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Parse iPhone app and UI-test sources
+        run: swiftc -frontend -parse ios/EtoTy/*.swift ios/EtoTyUITests/*.swift
+      - name: Test source confirmation, body map and visit selection
+        run: make evidence-check
   database:
     runs-on: ubuntu-24.04
     timeout-minutes: 10

@@ -6,7 +6,7 @@ private typealias ViewState<Value> = State<Value>
 private enum CareTab { case chat, level, map }
 
 private enum CareSheet: Hashable, Identifiable {
-    case schedule(Date?), documents(Region?), prevention, intent, brief, demo
+    case schedule(Date?), documents(Region?), prevention, intent, brief(Region?), demo
     case sourcePDF(URL, String, Int), editSource(String), incoming
 
     var id: Self { self }
@@ -108,8 +108,8 @@ struct PersonalCareView: View {
                 if session.schedule(at: date, weekly: weekly) { return nil }
                 return session.statusText ?? "Не удалось сохранить время. Попробуй ещё раз."
             }
-        case .brief:
-            PersonalBriefView(session: session)
+        case .brief(let area):
+            PersonalBriefView(session: session, initialArea: area)
         case .intent:
             CareIntentView(onChoose: chooseRoute)
         case .prevention:
@@ -151,7 +151,7 @@ struct PersonalCareView: View {
 
     private var profileMenu: some View {
         Menu {
-            Button(action: openBrief) { Label("Сводка к приёму", systemImage: "doc.richtext") }
+            Button { openBrief() } label: { Label("Сводка к приёму", systemImage: "doc.richtext") }
                 .disabled(session.storageUnavailable)
             Button { sheet = .intent } label: { Label("Подобрать раздел по фразе", systemImage: "text.magnifyingglass") }
             Button { sheet = .prevention } label: { Label("Подготовиться к профилактическому приёму", systemImage: "book") }
@@ -310,7 +310,7 @@ struct PersonalCareView: View {
                             if session.plan.nextContact != nil || session.plan.hasDueQuestion {
                                 Button("Отменить напоминание") { session.send("Отмени напоминание") }
                             }
-                            Button("Сводка к приёму", action: openBrief)
+                            Button("Сводка к приёму") { openBrief() }
                             Button("Поставить на паузу") { session.pause() }
                             Button("Завершить тему") { session.finish() }
                         } label: {
@@ -553,7 +553,7 @@ struct PersonalCareView: View {
                 }
                 Button { sheet = .documents(region) } label: { Label("Документы этой области", systemImage: "doc") }
                     .buttonStyle(.bordered).disabled(session.storageUnavailable)
-                Button(action: openBrief) { Label("Сводка к приёму", systemImage: "doc.richtext") }
+                Button { openBrief(for: region) } label: { Label("Сводка к приёму", systemImage: "doc.richtext") }
                     .disabled(session.storageUnavailable)
                 Button("Обсудить в диалоге") {
                     if draft.isEmpty { draft = "Хочу обсудить тему «" + region.rawValue + "»." }
@@ -565,10 +565,10 @@ struct PersonalCareView: View {
         .onAppear(perform: session.refreshDocuments)
     }
 
-    private func openBrief() {
+    private func openBrief(for area: Region? = nil) {
         composing = false
         session.refreshDocuments()
-        sheet = .brief
+        sheet = .brief(area)
     }
 
 }

@@ -4,7 +4,7 @@ PERSONAL_SOURCES := $(filter-out ios/EtoTy/EtoTyApp.swift,$(wildcard ios/EtoTy/*
 PERSONAL_TESTS := $(filter-out tests/PilotChecks.swift,$(wildcard tests/*Checks.swift))
 SWIFTC := swiftc -module-cache-path "$(BUILD)/modules"
 
-.PHONY: check ios-build ios-smoke sample-brief db-check
+.PHONY: check ios-build ios-smoke sample-brief db-check evidence-check
 check: $(BUILD)/core-check $(BUILD)/personal-check
 	python3 -B -m unittest discover -s tests -p test_ios_smoke_result.py
 	plutil -lint ios/EtoTy.xcodeproj/project.pbxproj
@@ -33,3 +33,12 @@ ios-smoke:
 
 db-check:
 	sh tests/database.sh
+
+evidence-check:
+	mkdir -p "$(BUILD)/modules"
+	$(SWIFTC) ios/EtoTy/PilotProfile.swift ios/EtoTy/CareDocument.swift \
+		ios/EtoTy/CareRegionSuggestion.swift ios/EtoTy/CareMapCoverage.swift \
+		ios/EtoTy/BriefDocumentSelection.swift tests/RegionSuggestionChecks.swift \
+		tests/MapCoverageChecks.swift tests/VisitSourceChecks.swift tests/portable/main.swift \
+		-o "$(BUILD)/evidence-check"
+	"$(BUILD)/evidence-check"
