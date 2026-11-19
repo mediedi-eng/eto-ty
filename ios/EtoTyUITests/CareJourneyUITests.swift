@@ -8,11 +8,7 @@ final class CareJourneyUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        let guidance = app.buttons["Что проверить?"]
-        XCTAssertTrue(guidance.waitForExistence(timeout: 10))
-        guidance.tap()
-        XCTAssertTrue(app.navigationBars["Что проверить?"].waitForExistence(timeout: 5))
-        app.buttons["Закрыть"].tap()
+        startPersonalPrevention(in: app)
 
         let composer = app.descendants(matching: .any)["care.composer"]
         XCTAssertTrue(composer.waitForExistence(timeout: 10))
@@ -42,6 +38,7 @@ final class CareJourneyUITests: XCTestCase {
         app.terminate()
         app.launch()
         XCTAssertTrue(sentMessage.waitForExistence(timeout: 10))
+        checkPreventionSurvivesRelaunch(in: app)
 
         let level = app.tabBars.buttons["Мой уровень"]
         XCTAssertTrue(level.waitForExistence(timeout: 5))
@@ -67,6 +64,54 @@ final class CareJourneyUITests: XCTestCase {
 
         try openSyntheticDocument(in: app, emptyArchive: emptyArchive)
         checkBriefFromBodyMap(in: app)
+    }
+
+    @MainActor
+    private func startPersonalPrevention(in app: XCUIApplication) {
+        let guidance = app.buttons["care.preparation.open"]
+        XCTAssertTrue(guidance.waitForExistence(timeout: 10))
+        guidance.tap()
+        XCTAssertTrue(app.navigationBars["Что проверить?"].waitForExistence(timeout: 5))
+
+        let record = app.buttons["care.preparation.record"]
+        XCTAssertTrue(record.waitForExistence(timeout: 5))
+        record.tap()
+        XCTAssertTrue(app.navigationBars["Последнее измерение"].waitForExistence(timeout: 5))
+        let noRecord = app.buttons["care.preparation.record.noRecord"]
+        XCTAssertTrue(noRecord.waitForExistence(timeout: 5))
+        noRecord.tap()
+
+        let context = app.buttons["care.preparation.context"]
+        XCTAssertTrue(context.waitForExistence(timeout: 5))
+        context.tap()
+        XCTAssertTrue(app.navigationBars["Моя ситуация"].waitForExistence(timeout: 5))
+        let adultContext = app.buttons["care.preparation.context.adultWithoutKnownHypertension"]
+        XCTAssertTrue(adultContext.waitForExistence(timeout: 5))
+        adultContext.tap()
+
+        let step = app.descendants(matching: .any)["care.preparation.step"]
+        XCTAssertTrue(step.waitForExistence(timeout: 5))
+        XCTAssertTrue(step.label.contains("вопрос врачу"))
+        let saveQuestion = app.buttons["care.preparation.saveQuestion"]
+        if !saveQuestion.isHittable { app.swipeUp() }
+        saveQuestion.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["care.preparation.saved"].waitForExistence(timeout: 5))
+
+        let start = app.buttons["care.preparation.start"]
+        if !start.isHittable { app.swipeDown() }
+        XCTAssertTrue(start.waitForExistence(timeout: 5) && start.isHittable)
+        start.tap()
+        XCTAssertTrue(app.buttons["Выбрать время"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    private func checkPreventionSurvivesRelaunch(in app: XCUIApplication) {
+        let guidance = app.buttons["care.preparation.open"]
+        XCTAssertTrue(guidance.waitForExistence(timeout: 5))
+        guidance.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["care.preparation.saved"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["care.preparation.context"].label.contains("гипертонию не диагностировали"))
+        app.buttons["Закрыть"].tap()
     }
 
     @MainActor
