@@ -1,7 +1,7 @@
 BUILD := local-data/build
 DEMO_CORE := ios/EtoTy/PilotProfile.swift ios/EtoTy/VisitPDF.swift
 PERSONAL_SOURCES := $(filter-out ios/EtoTy/EtoTyApp.swift,$(wildcard ios/EtoTy/*.swift))
-PERSONAL_TESTS := tests/CareChecks.swift tests/StorageChecks.swift tests/DocumentChecks.swift tests/SessionChecks.swift tests/SprintChecks.swift
+PERSONAL_TESTS := $(filter-out tests/PilotChecks.swift,$(wildcard tests/*Checks.swift))
 SWIFTC := swiftc -module-cache-path "$(BUILD)/modules"
 
 .PHONY: check ios-build ios-smoke sample-brief db-check

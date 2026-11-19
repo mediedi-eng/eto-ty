@@ -124,7 +124,7 @@ struct PilotView: View {
     }
 }
 
-private struct BriefFile: FileDocument {
+struct BriefFile: FileDocument {
     static var readableContentTypes: [UTType] { [.pdf] }
     let data: Data
     init(_ data: Data) { self.data = data }

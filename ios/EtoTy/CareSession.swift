@@ -57,7 +57,7 @@ final class CareSession: ObservableObject {
     func send(_ text: String) {
         let instant = now()
         guard apply({ $0.receive(text, now: instant) }), plan.topic != nil,
-              !plan.isPaused, !plan.isClosed,
+              !plan.isPaused, !plan.isClosed, !plan.isAskingForUrgentHelp,
               let date = ContactTimeSuggestion.parse(text, now: instant) else { return }
         suggestedContact = date
         contactSuggestionToken += 1

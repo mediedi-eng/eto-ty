@@ -1,4 +1,5 @@
 import SwiftUI
+import PDFKit
 import PhotosUI
 import QuickLook
 import UniformTypeIdentifiers
@@ -20,6 +21,7 @@ struct CareDocumentView: View {
     let region: Region?
     @Environment(\.dismiss) private var dismiss
     @DocumentState private var documents: [CareDocument] = []
+    @DocumentState private var query = ""
     @DocumentState private var picker = false
     @DocumentState private var photo: PhotosPickerItem?
     @DocumentState private var working = false
@@ -31,6 +33,15 @@ struct CareDocumentView: View {
     private let store = CareDocuments()
 
     init(region: Region? = nil) { self.region = region }
+
+    private var matches: [CareDocument] {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty else { return documents }
+        return documents.filter { document in
+            [document.name, document.region?.rawValue, document.evidence?.quote, document.evidence?.studyDate]
+                .compactMap { $0 }.contains { $0.localizedStandardContains(term) }
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -54,7 +65,8 @@ struct CareDocumentView: View {
                         Text(region == nil ? "Здесь появится первый добавленный документ." : "Пока нет файлов с этой меткой.")
                             .foregroundStyle(.secondary)
                     }
-                    ForEach(documents) { document in
+                    else if matches.isEmpty { Text("Совпадений нет. Попробуй другое слово или дату.").foregroundStyle(.secondary) }
+                    ForEach(matches) { document in
                         VStack(alignment: .leading, spacing: 8) {
                             Button {
                                 do { preview = try store.originalURL(for: document) }
@@ -73,6 +85,15 @@ struct CareDocumentView: View {
                             }
                             if let evidence = document.evidence, let quote = evidence.quote, let page = evidence.page {
                                 Text("Подтверждённый фрагмент, стр. " + String(page) + ": «" + quote + "»").font(.callout)
+                            }
+                            if document.region == nil, let suggestion = CareRegionSuggestion.fromTitle(document.name) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Предложено по названию: " + suggestion.rawValue)
+                                        .font(.caption).foregroundStyle(.secondary)
+                                    Button("Связать") { assign(suggestion, to: document) }
+                                        .buttonStyle(.borderless).font(.callout)
+                                        .accessibilityLabel("Связать " + document.name + " с областью " + suggestion.rawValue)
+                                }
                             }
                             HStack(spacing: 16) {
                                 Menu {
@@ -99,6 +120,7 @@ struct CareDocumentView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
+            .searchable(text: $query, prompt: "Имя, метка, цитата или дата")
             .navigationTitle(region?.rawValue ?? "Мои документы")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -210,6 +232,7 @@ private struct DocumentEvidenceEditor: View {
     @DocumentState private var reading = false
     @DocumentState private var pageCount = 1
     @DocumentState private var preview: URL?
+    @DocumentState private var pdfPage: SourcePDFPage?
     @DocumentState private var errorText: String?
 
     init(document: CareDocument, store: CareDocuments) {
@@ -227,10 +250,7 @@ private struct DocumentEvidenceEditor: View {
         NavigationStack {
             Form {
                 Section {
-                    Button("Открыть оригинал") {
-                        do { preview = try store.originalURL(for: document) }
-                        catch { errorText = "Не удалось открыть оригинал." }
-                    }
+                    Button("Открыть оригинал") { openOriginal(at: readPage) }
                     Toggle("Указать дату исследования", isOn: $hasDate)
                     if hasDate { DatePicker("Исследование", selection: $date, displayedComponents: .date) }
                 } header: { Text(document.name) }
@@ -273,6 +293,9 @@ private struct DocumentEvidenceEditor: View {
                     if document.kind == .pdf && !quote.isEmpty {
                         Stepper("Страница " + String(page), value: $page, in: 1...max(pageCount, page))
                     }
+                    if !quote.isEmpty {
+                        Button("Сверить с оригиналом, стр. " + String(page)) { openOriginal(at: page) }
+                    }
                 } header: { Text("Твой черновик") }
                 footer: { Text("Сверь цифры, слова и страницу с оригиналом. Пустая строка удаляет прежнюю цитату.") }
                 if let errorText { Text(errorText).foregroundStyle(.secondary) }
@@ -299,6 +322,71 @@ private struct DocumentEvidenceEditor: View {
                 pageCount = try await Task.detached { try archive.pageCount(for: original) }.value
             } catch { errorText = "Не удалось открыть оригинал." }
         }
+        .task(id: readRequest) {
+            guard let request = readRequest else { return }
+            let archive = store
+            let original = document
+            let selectedPage = readPage
+            do {
+                let result = try await Task.detached {
+                    let url = try archive.originalURL(for: original)
+                    return try CarePageReader.candidates(url: url, kind: original.kind, page: selectedPage)
+                }.value
+                guard !Task.isCancelled, request == readRequest, selectedPage == readPage else { return }
+                candidates = result
+                readStatus = candidates.isEmpty ? "Разборчивый фрагмент не найден. Можно переписать его вручную." :
+                    "Выбери фрагмент. Он появится в черновике для сверки."
+                reading = false
+            } catch {
+                guard !Task.isCancelled, request == readRequest else { return }
+                readStatus = "Не удалось прочитать страницу. Открой оригинал или перенеси фразу вручную."
+                reading = false
+            }
+        }
+        .sheet(item: $pdfPage) { source in
+            NavigationStack {
+                SourcePDFPreview(source: source)
+                    .navigationTitle("Оригинал · стр. " + String(source.page))
+                    .toolbar { Button("К выписке") { pdfPage = nil } }
+            }
+        }
         .quickLookPreview($preview)
     }
+    private func openOriginal(at page: Int) {
+        do {
+            let url = try store.originalURL(for: document)
+            if document.kind == .pdf { pdfPage = SourcePDFPage(url: url, page: page) }
+            else { preview = url }
+        } catch { errorText = "Не удалось открыть оригинал." }
+    }
+
 }
+
+private struct SourcePDFPage: Identifiable {
+    let url: URL
+    let page: Int
+    var id: Int { page }
+
+    @MainActor func makeView() -> PDFView {
+        let view = PDFView()
+        view.autoScales = true
+        view.displayMode = .singlePage
+        view.document = PDFDocument(url: url)
+        if let current = view.document?.page(at: page - 1) { view.go(to: current) }
+        return view
+    }
+}
+
+#if os(iOS)
+private struct SourcePDFPreview: UIViewRepresentable {
+    let source: SourcePDFPage
+    func makeUIView(context: Context) -> PDFView { source.makeView() }
+    func updateUIView(_ view: PDFView, context: Context) {}
+}
+#elseif os(macOS)
+private struct SourcePDFPreview: NSViewRepresentable {
+    let source: SourcePDFPage
+    func makeNSView(context: Context) -> PDFView { source.makeView() }
+    func updateNSView(_ view: PDFView, context: Context) {}
+}
+#endif

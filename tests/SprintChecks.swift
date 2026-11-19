@@ -7,7 +7,9 @@ struct SprintChecks {
         try CareChecks.run()
         try StorageChecks.run()
         try DocumentChecks.run()
+        try PageReaderChecks.run()
+        try PersonalBriefChecks.run()
         try await SessionChecks.run()
-        print("Verified personal conversations, local storage, document handling and scheduled follow-up.")
+        print("Verified personal conversations, local storage, document intake, page reading, visit summaries and scheduled follow-up.")
     }
 }

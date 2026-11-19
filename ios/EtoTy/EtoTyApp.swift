@@ -39,7 +39,8 @@ private struct SnapshotShield: UIViewRepresentable {
         override func didMoveToWindow() {
             super.didMoveToWindow()
             let center = NotificationCenter.default
-            center.removeObserver(self)
+            center.removeObserver(self, name: UIScene.didEnterBackgroundNotification, object: nil)
+            center.removeObserver(self, name: UIScene.willEnterForegroundNotification, object: nil)
             uncover()
             guard let scene = window?.windowScene else { return }
             center.addObserver(self, selector: #selector(conceal), name: UIScene.didEnterBackgroundNotification, object: scene)
