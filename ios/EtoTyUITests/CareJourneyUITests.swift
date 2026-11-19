@@ -131,7 +131,7 @@ final class CareJourneyUITests: XCTestCase {
         let area = app.buttons["brief.area"]
         XCTAssertTrue(area.waitForExistence(timeout: 5))
         area.tap()
-        app.buttons["Почки"].tap()
+        chooseBriefArea("Почки", in: app)
         let empty = app.descendants(matching: .any)["brief.area.empty"]
         if !empty.isHittable { app.swipeUp() }
         XCTAssertTrue(empty.waitForExistence(timeout: 5))
@@ -139,7 +139,7 @@ final class CareJourneyUITests: XCTestCase {
         XCTAssertFalse(preview.isEnabled)
 
         app.buttons["brief.area"].tap()
-        app.buttons["Все области"].tap()
+        chooseBriefArea("Все области", in: app)
         let document = app.switches.matching(NSPredicate(format: "label CONTAINS %@", "Example-report.png")).firstMatch
         XCTAssertTrue(document.waitForExistence(timeout: 5))
         waitForValue("0", of: document)
@@ -147,12 +147,18 @@ final class CareJourneyUITests: XCTestCase {
         waitForValue("1", of: document)
         XCTAssertTrue(preview.isEnabled)
         app.buttons["brief.area"].tap()
-        app.buttons["Почки"].tap()
+        chooseBriefArea("Почки", in: app)
         waitForValue("1", of: document)
         if !preview.isHittable { app.swipeUp() }
         preview.tap()
         XCTAssertTrue(app.navigationBars["Предпросмотр"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Example-report.png")).firstMatch.exists)
+    }
+
+    private func chooseBriefArea(_ title: String, in app: XCUIApplication) {
+        let choice = app.collectionViews.buttons[title].firstMatch
+        XCTAssertTrue(choice.waitForExistence(timeout: 5))
+        choice.tap()
     }
 
     @MainActor
