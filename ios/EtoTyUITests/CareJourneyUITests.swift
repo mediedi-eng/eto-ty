@@ -128,7 +128,11 @@ final class CareJourneyUITests: XCTestCase {
         if !brief.isHittable { app.swipeUp() }
         brief.tap()
 
-        let empty = app.staticTexts["По области «Почки» больше нечего добавить."]
+        let area = app.buttons["brief.area"]
+        XCTAssertTrue(area.waitForExistence(timeout: 5))
+        area.tap()
+        app.buttons["Почки"].tap()
+        let empty = app.descendants(matching: .any)["brief.area.empty"]
         if !empty.isHittable { app.swipeUp() }
         XCTAssertTrue(empty.waitForExistence(timeout: 5))
         let preview = app.buttons["brief.preview"]
@@ -138,12 +142,13 @@ final class CareJourneyUITests: XCTestCase {
         app.buttons["Все области"].tap()
         let document = app.switches.matching(NSPredicate(format: "label CONTAINS %@", "Example-report.png")).firstMatch
         XCTAssertTrue(document.waitForExistence(timeout: 5))
-        XCTAssertEqual(document.value as? String, "0")
-        document.tap()
+        waitForValue("0", of: document)
+        document.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        waitForValue("1", of: document)
         XCTAssertTrue(preview.isEnabled)
         app.buttons["brief.area"].tap()
         app.buttons["Почки"].tap()
-        XCTAssertEqual(document.value as? String, "1")
+        waitForValue("1", of: document)
         if !preview.isHittable { app.swipeUp() }
         preview.tap()
         XCTAssertTrue(app.navigationBars["Предпросмотр"].waitForExistence(timeout: 5))
