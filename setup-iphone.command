@@ -51,35 +51,66 @@ if [ "$mode" = --build ]; then
     exit 0
 fi
 
-if [ "$mode" = --smoke ]; then
-    # Select an installed iOS runtime and a compatible iPhone without using any personal simulator.
-    xcodebuild -license check
-    if ! xcodebuild -checkFirstLaunchStatus; then
-        echo 'Завершите первый запуск Xcode перед проверкой симулятора.' >&2
-        exit 1
-    fi
-    selection=$(xcrun simctl list -j | python3 -c '
+if [ "$mode" = --open ] && ! xcodebuild -checkFirstLaunchStatus >/dev/null 2>&1; then
+    open -a "$xcode_app"
+    printf '%s\n' 'Заверши первый запуск Xcode и системные подтверждения, затем нажми Enter.'
+    IFS= read -r _ || exit 1
+fi
+xcodebuild -license check
+xcodebuild -checkFirstLaunchStatus
+
+device_name='EtoTy Development'
+select_simulator() {
+    catalog=$(xcrun simctl list -j) || {
+        printf '%s\n' 'Нет связи с CoreSimulator. Открой Xcode и повтори запуск из Finder или Terminal на Mac.' >&2
+        return 1
+    }
+    printf '%s\n' "$catalog" | python3 -c '
 import json, sys
 catalog = json.load(sys.stdin)
+mode, name = sys.argv[1:3]
 runtimes = sorted(
-    (runtime for runtime in catalog["runtimes"] if runtime.get("isAvailable")
-     and runtime["identifier"].startswith("com.apple.CoreSimulator.SimRuntime.iOS-")),
-    key=lambda runtime: tuple(int(n) for n in runtime["version"].split(".")),
-    reverse=True,
-)
+    (r for r in catalog["runtimes"] if r.get("isAvailable")
+     and r["identifier"].startswith("com.apple.CoreSimulator.SimRuntime.iOS-")
+     and int(r["version"].split(".")[0]) >= 17),
+    key=lambda r: tuple(int(n) for n in r["version"].split(".")), reverse=True)
+candidates = []
 for runtime in runtimes:
-    if int(runtime["version"].split(".")[0]) < 17:
-        continue
-    device_types = [device["identifier"] for device in runtime.get("supportedDeviceTypes", [])]
-    device_types.extend(device.get("deviceTypeIdentifier", "") for device
-                        in catalog["devices"].get(runtime["identifier"], []))
-    iphone = next((identifier for identifier in device_types if ".iPhone-" in identifier), None)
+    runtime_id = runtime["identifier"]
+    devices = catalog["devices"].get(runtime_id, [])
+    if mode == "--open":
+        for device in devices:
+            if (device.get("name") == name and device.get("isAvailable")
+                    and ".iPhone-" in device.get("deviceTypeIdentifier", "")):
+                print(device["udid"])
+                sys.exit(0)
+    types = [d["identifier"] for d in runtime.get("supportedDeviceTypes", [])]
+    types.extend(d.get("deviceTypeIdentifier", "") for d in devices)
+    iphone = next((t for t in types if ".iPhone-" in t), None)
     if iphone:
-        print(runtime["identifier"], iphone)
-        break
-else:
-    sys.exit("Для проверки установите iOS Simulator версии 17 или новее в настройках Xcode.")
-')
+        candidates.append((runtime_id, iphone))
+if not candidates:
+    sys.exit(3)
+print(*candidates[0])
+' "$mode" "$device_name"
+}
+
+waiting=false
+while :; do
+    if selection=$(select_simulator); then break; else result=$?; fi
+    if [ "$result" -ne 3 ]; then exit "$result"; fi
+    if [ "$mode" != --open ] || [ ! -t 0 ]; then
+        printf '%s\n' 'Установи iOS Simulator версии 17 или новее в Xcode → Settings → Components.' >&2
+        exit 1
+    fi
+    if [ "$waiting" = false ]; then
+        printf '%s\n' 'Ожидаю iOS Simulator. Если загрузка уже идёт в Xcode, дождись её завершения. Иначе выбери iOS в Settings → Components. Для отмены нажми Ctrl+C.'
+        waiting=true
+    fi
+    sleep 8
+done
+
+if [ "$mode" = --smoke ]; then
     runtime=${selection% *}
     device_type=${selection#* }
     simulator=$(xcrun simctl create "EtoTy smoke $$" "$device_type" "$runtime")
@@ -90,17 +121,24 @@ else:
     exit 0
 fi
 
-if ! xcodebuild -checkFirstLaunchStatus >/dev/null 2>&1; then
-    open -a "$xcode_app"
-    printf '%s\n' 'Заверши первый запуск Xcode, включая выбор iOS и системные подтверждения, затем нажми Enter.'
-    IFS= read -r _ || exit 1
-    xcodebuild -checkFirstLaunchStatus
-fi
-runtimes=$(LC_ALL=C xcrun simctl list runtimes available)
-if ! printf '%s\n' "$runtimes" | awk '/^iOS [0-9]/ && $2+0 >= 17 && $0 !~ /unavailable/ { found=1 } END { exit !found }'; then
-    printf '%s\n' 'Загружаю среду iOS Simulator через Xcode.'
-    xcodebuild -downloadPlatform iOS
-fi
+case "$selection" in
+    *' '*) simulator=$(xcrun simctl create "$device_name" "${selection#* }" "${selection% *}") ;;
+    *) simulator=$selection ;;
+esac
+
 build_app
-open -a "$xcode_app" ios/EtoTy.xcodeproj
-printf '%s\n' 'Проект открыт. Выбери iPhone в верхней панели Xcode и нажми Run.'
+xcrun simctl bootstatus "$simulator" -b
+app="local-data/build/ios/Build/Products/Debug-iphonesimulator/EtoTy.app"
+bundle_id=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")
+xcrun simctl install "$simulator" "$app"
+xcrun simctl launch --terminate-running-process "$simulator" "$bundle_id"
+sim_app="$DEVELOPER_DIR/Applications/Simulator.app"
+if [ -d "$sim_app" ]; then
+    open -a "$sim_app" --args -CurrentDeviceUDID "$simulator"
+else
+    if ! open -b com.apple.iphonesimulator --args -CurrentDeviceUDID "$simulator"; then
+        printf '%s\n' 'Приложение запущено в симуляторе «EtoTy Development». Чтобы увидеть окно, открой Simulator через Xcode → Open Developer Tool.' >&2
+        exit 1
+    fi
+fi
+printf '%s\n' '«Это ты» запущено. При следующем запуске личный профиль сохранится в этом симуляторе.'

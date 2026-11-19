@@ -24,8 +24,70 @@ struct CarePlan: Codable, Equatable {
     private(set) var isClosed = false
     private(set) var hasDueQuestion = false
     private(set) var lastAnswer: CareMessage?
+    private(set) var activeSource: CareSourceReference?
+    // Optional fields preserve compatibility with the first personal profiles.
+    private var followUpDecisions: [String: [String: CareFollowUpDecision]]?
 
     init() {}
+
+    func documentFollowUp(for document: CareDocument) -> CareDocumentFollowUp? {
+        let offer = CareDocumentFollowUp(document: document)
+        return canDecide(offer) ? offer : nil
+    }
+
+    private func canDecide(_ offer: CareDocumentFollowUp) -> Bool {
+        activeSource == nil && !isPaused && !hasDueQuestion && !isAskingForUrgentHelp
+            && followUpDecisions?[offer.documentID]?[offer.id] == nil
+    }
+
+    mutating func acceptFollowUp(_ offer: CareDocumentFollowUp, now: Date = Date()) {
+        guard canDecide(offer) else { return }
+        let createsTopic = topic == nil || isClosed
+        if createsTopic {
+            topic = offer.action
+            isClosed = false
+            lastAnswer = nil
+        }
+        remember(.accepted, for: offer)
+        activeSource = CareSourceReference(documentID: offer.documentID, versionID: offer.id, createdTopic: createsTopic)
+        let response = createsTopic
+            ? "Дело добавлено. В карточке можно открыть его источник и выбрать, когда вернуться к нему."
+            : "Источник привязан к текущему делу. Его можно открыть из карточки дела."
+        reply(response, at: now)
+    }
+
+    mutating func dismissFollowUp(_ offer: CareDocumentFollowUp) {
+        guard canDecide(offer) else { return }
+        remember(.dismissed, for: offer)
+    }
+
+    private mutating func remember(_ decision: CareFollowUpDecision, for offer: CareDocumentFollowUp) {
+        if followUpDecisions == nil { followUpDecisions = [:] }
+        followUpDecisions?[offer.documentID, default: [:]][offer.id] = decision
+    }
+
+    /// Caller supplies a complete, successfully read archive snapshot.
+    mutating func reconcileFollowUpSources(_ documents: [CareDocument], now: Date = Date()) {
+        if let decisions = followUpDecisions {
+            let liveIDs = Set(documents.map(\.id))
+            let retained = decisions.filter { liveIDs.contains($0.key) }
+            followUpDecisions = retained.isEmpty ? nil : retained
+        }
+        guard let source = activeSource else { return }
+        let current = documents.first { $0.id == source.documentID }.map { CareDocumentFollowUp(document: $0) }
+        guard current?.id != source.versionID else { return }
+        activeSource = nil
+        let reason = current == nil ? "Источник удалён." : "Сведения в источнике изменились."
+        if source.createdTopic {
+            isClosed = true
+            isPaused = false
+            nextContact = nil
+            hasDueQuestion = false
+            reply(reason + " Дело по прежней записи закрыто, напоминание снято.", at: now)
+        } else {
+            reply(reason + " Привязка снята. Твоя договорённость по теме сохранена.", at: now)
+        }
+    }
 
     var isAskingForUrgentHelp: Bool {
         guard let message = messages.last(where: { $0.fromUser }) else { return false }
@@ -66,6 +128,11 @@ struct CarePlan: Codable, Equatable {
         if Self.isExplicitEmergencyRequest(value) {
             messages.append(message)
             reply("Сейчас позвони в местную экстренную службу или попроси человека рядом вызвать помощь. На iPhone доступна функция «Экстренный вызов — SOS». Врача в этом чате нет, приложение не передало вызов.", at: now)
+            return
+        }
+        if CareHistoryQuery.parse(value) != nil {
+            messages.append(message)
+            reply("Показываю доступные записи из личного архива.", at: now)
             return
         }
 
@@ -179,6 +246,7 @@ struct CarePlan: Codable, Equatable {
 
     private mutating func finish(at now: Date) {
         guard topic != nil, !isClosed else { return }
+        activeSource = nil
         isClosed = true
         isPaused = false
         nextContact = nil

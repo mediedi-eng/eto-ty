@@ -36,6 +36,8 @@ enum SessionChecks {
         precondition(CareRegionSuggestion.fromTitle("УЗИ печени и почек.pdf") == nil)
         precondition(CareRegionSuggestion.fromTitle("IMG_0174.HEIC") == nil)
         session.send("Вымышленное дело для проверки")
+        session.send("Найди в документах фразу напомни через две минуты")
+        precondition(session.suggestedContact == nil && session.contactSuggestionToken == 0)
         session.send("Напомни через две минуты")
         precondition(session.suggestedContact == instant.addingTimeInterval(120))
         precondition(session.plan.nextContact == nil && session.contactSuggestionToken == 1)
@@ -75,6 +77,32 @@ enum SessionChecks {
         precondition(tryLoad(storage)?.isPaused == true)
         session.deleteProfile()
         precondition(session.plan.topic == nil && tryLoad(storage) == nil)
+
+        let docID = try docs.add(VisitPDF.render("Вымышленный фрагмент"), name: "Справка.pdf").id
+        session.refreshDocuments()
+        let initialOffer = session.documentSuggestion!
+        try docs.annotate(docID, studyDate: instant, page: 1, quote: "Вымышленный фрагмент")
+        session.acceptDocumentSuggestion(initialOffer)
+        precondition(session.plan.topic == nil && session.documentSuggestion?.isReviewed == true)
+        let correctedOffer = session.documentSuggestion!
+        session.acceptDocumentSuggestion(correctedOffer)
+        precondition(session.activeDocumentSource?.id == docID && session.documentSuggestion == nil)
+        session.schedule(at: instant.addingTimeInterval(180))
+        precondition(tryLoad(storage)?.nextContact != nil)
+        // An unreadable archive must never be treated as confirmation that a source was removed.
+        let metadata = root.appendingPathComponent("files").appendingPathComponent(docID).appendingPathComponent("record.json")
+        let saved = try Data(contentsOf: metadata)
+        try Data([0]).write(to: metadata, options: .atomic)
+        session.refreshDocuments()
+        precondition(!session.archiveAvailable && session.plan.activeSource != nil && session.plan.nextContact != nil)
+        try saved.write(to: metadata, options: .atomic)
+        session.refreshDocuments()
+        precondition(session.activeDocumentSource?.id == docID)
+        try docs.remove(docID)
+        session.refresh()
+        precondition(session.plan.activeSource == nil && session.plan.nextContact == nil && session.activeDocumentSource == nil)
+        precondition(tryLoad(storage) == session.plan)
+        session.deleteProfile()
 
         // Failure to persist must leave the previous state available for a retry.
         let badPath = root.appendingPathComponent("blocked")

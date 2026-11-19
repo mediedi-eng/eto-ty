@@ -1,4 +1,5 @@
 import SwiftUI
+import QuickLook
 
 private typealias ViewState<Value> = State<Value>
 
@@ -6,6 +7,7 @@ private enum CareTab { case chat, level, map }
 
 private enum CareSheet: Hashable, Identifiable {
     case schedule(Date?), documents(Region?), prevention, intent, brief, demo
+    case sourcePDF(URL, String, Int), editSource(String)
 
     var id: Self { self }
 }
@@ -16,8 +18,8 @@ struct PersonalCareView: View {
     @ViewState private var sheet: CareSheet?
     @ViewState private var draft = ""
     @ViewState private var region = Region.heart
-    @ViewState private var documents: [CareDocument] = []
-    @ViewState private var archiveAvailable = false
+    @ViewState private var photoOriginal: URL?
+    @ViewState private var sourceIssue: String?
     @ViewState private var confirmingDeletion = false
     @FocusState private var composing: Bool
     @Environment(\.colorScheme) private var scheme
@@ -44,20 +46,36 @@ struct PersonalCareView: View {
             .tabItem { Label("Карта тела", systemImage: "figure.stand") }.tag(CareTab.map)
         }
         .tint(accent)
-        .sheet(item: $sheet, onDismiss: loadDocuments) { destination in
+        .onAppear { session.refreshDocuments() }
+        .sheet(item: $sheet, onDismiss: session.refreshDocuments) { destination in
             switch destination {
             case .schedule(let suggestion):
                 ContactTimeView(previous: suggestion ?? session.plan.nextContact) { date in
                     session.schedule(at: date)
                 }
             case .brief:
-                PersonalBriefView(plan: session.plan, documents: documents)
+                PersonalBriefView(plan: session.plan, documents: session.archivedDocuments)
             case .intent:
                 CareIntentView(onChoose: chooseRoute)
             case .prevention:
                 CarePreventionView(onChoose: preventionAction)
             case .documents(let scope):
                 CareDocumentView(region: scope)
+            case .sourcePDF(let url, let name, let page):
+                NavigationStack {
+                    SourcePDFPreview(source: SourcePDFPage(url: url, page: page))
+                        .navigationTitle(name)
+                        .toolbar { Button("Готово") { sheet = nil } }
+                }
+            case .editSource(let id):
+                if let document = session.archivedDocuments.first(where: { $0.id == id }) {
+                    DocumentEvidenceEditor(document: document, store: CareDocuments())
+                } else {
+                    VStack {
+                        Text("Документ больше недоступен.")
+                        Button("К диалогу") { sheet = nil }
+                    }
+                }
             case .demo:
                 VStack(spacing: 0) {
                     HStack {
@@ -72,11 +90,13 @@ struct PersonalCareView: View {
                 }
             }
         }
+        .quickLookPreview($photoOriginal)
         .alert("Удалить личный профиль из приложения?", isPresented: $confirmingDeletion) {
             Button("Отмена", role: .cancel) {}
             Button("Удалить", role: .destructive) {
                 session.deleteProfile()
-                loadDocuments()
+                sourceIssue = nil
+                photoOriginal = nil
             }
         } message: {
             Text("Будут удалены переписка и сохранённые в приложении документы. Будущее напоминание отменится.")
@@ -84,6 +104,9 @@ struct PersonalCareView: View {
         .onChange(of: session.plan.messages.first?.id) { _, _ in
             draft = ""
             tab = .chat
+            sourceIssue = nil
+            photoOriginal = nil
+            sheet = nil
         }
         .onChange(of: session.contactSuggestionToken) { _, _ in
             guard let date = session.suggestedContact else { return }
@@ -92,6 +115,7 @@ struct PersonalCareView: View {
         }
         .onChange(of: session.openChatToken) { _, _ in
             confirmingDeletion = false
+            photoOriginal = nil
             sheet = nil
             composing = false
             tab = .chat
@@ -136,6 +160,22 @@ struct PersonalCareView: View {
                         if session.plan.topic != nil && !session.plan.isAskingForUrgentHelp {
                             agenda
                         }
+                        if !session.plan.isAskingForUrgentHelp, let query = CareHistoryQuery.latest(in: session.plan) {
+                            if session.archiveAvailable {
+                                CareHistoryResultsView(query: query, documents: session.archivedDocuments) { document in
+                                    openOriginal(id: document.id, page: document.evidence?.page)
+                                }
+                            } else {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Сейчас не удаётся прочитать архив документов.")
+                                    Button("Повторить поиск") { session.refresh() }
+                                        .accessibilityIdentifier("care.history.retry")
+                                }
+                            }
+                        }
+                        if let suggestion = session.documentSuggestion {
+                            followUpCard(suggestion)
+                        }
                         Color.clear.frame(height: 1).id("latest").accessibilityHidden(true)
                     }.padding()
                 }
@@ -143,6 +183,9 @@ struct PersonalCareView: View {
                 .onAppear { proxy.scrollTo("latest", anchor: .bottom) }
                 .onChange(of: session.plan.messages.last?.id) { _, _ in
                     proxy.scrollTo("latest", anchor: .bottom)
+                }
+                .onChange(of: session.documentSuggestion?.id) { _, newID in
+                    if newID != nil { proxy.scrollTo("latest", anchor: .bottom) }
                 }
             }
             Divider()
@@ -168,6 +211,12 @@ struct PersonalCareView: View {
     }
 
     @ViewBuilder private var sessionFeedback: some View {
+        if let sourceIssue {
+            HStack {
+                Label(sourceIssue, systemImage: "doc.badge.ellipsis").font(.callout)
+                Button("Закрыть") { self.sourceIssue = nil }
+            }.padding(.horizontal)
+        }
         if let status = session.statusText {
             HStack {
                 Label(status, systemImage: "info.circle").font(.callout)
@@ -182,6 +231,15 @@ struct PersonalCareView: View {
 
     private var agenda: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if let source = session.activeDocumentSource {
+                Text("Документ по этой теме").font(.subheadline.weight(.semibold))
+                sourceButton(id: source.id, name: source.name, page: source.evidence?.page)
+                    .accessibilityIdentifier("care.linkedSource")
+                if source.evidence?.quote == nil {
+                    reviewButton(id: source.id)
+                        .accessibilityIdentifier("care.linkedSource.review")
+                }
+            }
             Label("Следующий контакт", systemImage: "calendar").font(.headline)
             Text(contactDescription).font(.subheadline)
             if let status = session.notificationStatus, session.plan.nextContact != nil {
@@ -216,6 +274,74 @@ struct PersonalCareView: View {
             .background(accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
     }
 
+    private func followUpCard(_ suggestion: CareDocumentFollowUp) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(suggestion.title).font(.headline)
+            if let quote = suggestion.quote {
+                Text("«" + quote + "»").font(.callout).textSelection(.enabled)
+            }
+            if let studyDate = suggestion.studyDate {
+                Text("Дата исследования · " + studyDate).font(.footnote).foregroundStyle(.secondary)
+            }
+            sourceButton(id: suggestion.documentID, name: suggestion.documentName, page: suggestion.page)
+                .accessibilityIdentifier("care.suggestion.source")
+            Text(suggestion.action)
+            if !suggestion.isReviewed {
+                reviewButton(id: suggestion.documentID)
+                    .accessibilityIdentifier("care.suggestion.review")
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) { followUpActions(suggestion) }
+                VStack(alignment: .leading, spacing: 8) { followUpActions(suggestion) }
+            }
+        }.padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    @ViewBuilder private func followUpActions(_ suggestion: CareDocumentFollowUp) -> some View {
+        Button(session.plan.topic != nil && !session.plan.isClosed ? "Связать с текущим делом" : "Добавить в план") {
+            session.acceptDocumentSuggestion(suggestion)
+        }.buttonStyle(.borderedProminent).accessibilityIdentifier("care.suggestion.accept")
+        Button("Скрыть") { session.dismissDocumentSuggestion(suggestion) }
+            .accessibilityIdentifier("care.suggestion.dismiss")
+    }
+
+    private func sourceButton(id: String, name: String, page: Int?) -> some View {
+        let caption = name + (page.map { " · стр. " + String($0) } ?? "")
+        return Button {
+            openOriginal(id: id, page: page)
+        } label: {
+            Label(caption, systemImage: "doc.text.magnifyingglass").multilineTextAlignment(.leading)
+        }
+        .accessibilityLabel("Открыть оригинал: " + caption)
+    }
+
+    private func reviewButton(id: String) -> some View {
+        Button("Разобрать страницу") {
+            composing = false
+            sheet = .editSource(id)
+        }
+    }
+
+    private func openOriginal(id: String, page: Int?) {
+        sourceIssue = nil
+        composing = false
+        guard let document = session.archivedDocuments.first(where: { $0.id == id }) else {
+            sourceIssue = "Оригинал недоступен. Проверь, сохранился ли он в архиве."
+            session.refreshDocuments()
+            return
+        }
+        do {
+            let url = try session.originalURL(for: document)
+            if document.kind == .pdf { sheet = .sourcePDF(url, document.name, page ?? 1) }
+            else { photoOriginal = url }
+        } catch {
+            sourceIssue = "Не удалось открыть оригинал. Попробуй ещё раз после разблокировки устройства."
+            session.refreshDocuments()
+        }
+    }
+
     private func chooseRoute(_ route: CareIntentRoute) {
         switch route {
         case .documents:
@@ -223,8 +349,8 @@ struct PersonalCareView: View {
         case .prevention:
             sheet = .prevention
         case .visitPreparation:
-            loadDocuments()
-            if session.plan.topic != nil || !documents.isEmpty {
+            session.refreshDocuments()
+            if session.plan.topic != nil || !session.archivedDocuments.isEmpty {
                 sheet = .brief
             } else {
                 sheet = nil
@@ -281,7 +407,7 @@ struct PersonalCareView: View {
                         Text("Есть исходная картина").font(.headline).foregroundStyle(accent)
                         Text("В области «" + area.rawValue + "» есть датированная запись, которую ты сверил с оригиналом.")
                     }
-                    Button { sheet = .documents(area) } label: { DocumentSourceRow(document: document) }
+                    Button { openOriginal(id: document.id, page: document.evidence?.page) } label: { DocumentSourceRow(document: document) }
                         .buttonStyle(.plain)
                 } else if session.plan.topic != nil {
                     VStack(alignment: .leading, spacing: 6) {
@@ -312,11 +438,11 @@ struct PersonalCareView: View {
                 }
             }.padding().frame(maxWidth: .infinity, alignment: .leading)
         }
-        .onAppear(perform: loadDocuments)
+        .onAppear(perform: session.refreshDocuments)
     }
 
     private var levelEvidence: CareDocument? {
-        documents.first { doc in
+        session.archivedDocuments.first { doc in
             doc.region != nil && doc.evidence?.studyDate != nil && !(doc.evidence?.quote?.isEmpty ?? true)
         }
     }
@@ -346,13 +472,15 @@ struct PersonalCareView: View {
                 }
                 Divider()
                 Text(region.rawValue).font(.title2.weight(.semibold))
-                if archiveAvailable {
-                    let linked = documents.filter { $0.region == region }
+                if session.archiveAvailable {
+                    let linked = session.archivedDocuments.filter { $0.region == region }
                     if linked.isEmpty {
                         Text("Связанных документов пока нет.").foregroundStyle(.secondary)
                     }
                     ForEach(linked) { document in
-                        DocumentSourceRow(document: document)
+                        Button { openOriginal(id: document.id, page: document.evidence?.page) } label: {
+                            DocumentSourceRow(document: document)
+                        }.buttonStyle(.plain)
                     }
                 } else {
                     Text("Сведения о документах пока недоступны.").foregroundStyle(.secondary)
@@ -368,29 +496,15 @@ struct PersonalCareView: View {
                 }.disabled(session.storageUnavailable)
             }.padding().frame(maxWidth: .infinity, alignment: .leading)
         }
-        .onAppear(perform: loadDocuments)
+        .onAppear(perform: session.refreshDocuments)
     }
 
     private func openBrief() {
         composing = false
-        loadDocuments()
+        session.refreshDocuments()
         sheet = .brief
     }
 
-    private func loadDocuments() {
-        guard !session.storageUnavailable else {
-            documents = []
-            archiveAvailable = false
-            return
-        }
-        do {
-            documents = try CareDocuments().list()
-            archiveAvailable = true
-        } catch {
-            documents = []
-            archiveAvailable = false
-        }
-    }
 }
 
 // Anterior, schematic orientation. The highlighted region follows the selection.

@@ -19,6 +19,18 @@ final class CareSession: ObservableObject {
     @Published private(set) var openChatToken = 0
     @Published private(set) var suggestedContact: Date?
     @Published private(set) var contactSuggestionToken = 0
+    @Published private(set) var archivedDocuments: [CareDocument] = []
+    @Published private(set) var archiveAvailable = false
+
+    var documentSuggestion: CareDocumentFollowUp? {
+        guard archiveAvailable else { return nil }
+        return archivedDocuments.lazy.compactMap { self.plan.documentFollowUp(for: $0) }.first
+    }
+
+    var activeDocumentSource: CareDocument? {
+        guard archiveAvailable, let reference = plan.activeSource else { return nil }
+        return archivedDocuments.first { $0.id == reference.documentID && CareDocumentFollowUp(document: $0).id == reference.versionID }
+    }
 
     private let storage: CareStorage
     private let documents: CareDocuments
@@ -57,7 +69,7 @@ final class CareSession: ObservableObject {
     func send(_ text: String) {
         let instant = now()
         guard apply({ $0.receive(text, now: instant) }), plan.topic != nil,
-              !plan.isPaused, !plan.isClosed, !plan.isAskingForUrgentHelp,
+              !plan.isPaused, !plan.isClosed, !plan.isAskingForUrgentHelp, CareHistoryQuery.parse(text) == nil,
               let date = ContactTimeSuggestion.parse(text, now: instant) else { return }
         suggestedContact = date
         contactSuggestionToken += 1
@@ -82,7 +94,53 @@ final class CareSession: ObservableObject {
             restore()
             return
         }
-        apply(refreshDelivery: true) { $0.checkDue(now: self.now()) }
+        refreshArchive(andDelivery: true)
+    }
+
+    func refreshDocuments() { refreshArchive(andDelivery: false) }
+
+    func originalURL(for document: CareDocument) throws -> URL {
+        try documents.originalURL(for: document)
+    }
+
+    func acceptDocumentSuggestion(_ displayed: CareDocumentFollowUp) {
+        guard let current = currentSuggestion(matching: displayed) else { return }
+        apply { $0.acceptFollowUp(current, now: self.now()) }
+    }
+
+    func dismissDocumentSuggestion(_ displayed: CareDocumentFollowUp) {
+        guard let current = currentSuggestion(matching: displayed) else { return }
+        apply { $0.dismissFollowUp(current) }
+    }
+
+    private func currentSuggestion(matching displayed: CareDocumentFollowUp) -> CareDocumentFollowUp? {
+        refreshDocuments()
+        guard archiveAvailable else {
+            statusText = "Не удалось открыть архив. Попробуй ещё раз после разблокировки."
+            return nil
+        }
+        guard let current = documentSuggestion, current.id == displayed.id else {
+            statusText = "Предложение изменилось. Проверь текущую карточку."
+            return nil
+        }
+        return current
+    }
+
+    private func refreshArchive(andDelivery: Bool) {
+        guard !storageUnavailable else {
+            archivedDocuments = []
+            archiveAvailable = false
+            return
+        }
+        let snapshot = try? documents.list()
+        if let snapshot, archivedDocuments != snapshot { archivedDocuments = snapshot }
+        if snapshot == nil { archivedDocuments = [] }
+        archiveAvailable = snapshot != nil
+        // A locked or unreadable archive says nothing about whether the source still exists.
+        apply(refreshDelivery: andDelivery) { updated in
+            if let snapshot { updated.reconcileFollowUpSources(snapshot, now: self.now()) }
+            updated.checkDue(now: self.now())
+        }
     }
 
     func deleteProfile() {
@@ -95,6 +153,8 @@ final class CareSession: ObservableObject {
             return
         }
         plan = CarePlan()
+        archivedDocuments = []
+        archiveAvailable = true
         suggestedContact = nil
         storageUnavailable = false
         statusText = "Личные данные удалены с этого устройства."
@@ -107,7 +167,7 @@ final class CareSession: ObservableObject {
             plan = try storage.load() ?? CarePlan()
             storageUnavailable = false
             statusText = nil
-            apply(refreshDelivery: true) { $0.checkDue(now: self.now()) }
+            refreshArchive(andDelivery: true)
         } catch let error as CareStorageError {
             storageUnavailable = true
             statusText = error.localizedDescription + " Профиль можно открыть снова после восстановления или обновления приложения."

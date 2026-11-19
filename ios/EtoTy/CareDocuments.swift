@@ -64,7 +64,8 @@ struct CareDocuments {
     private static var generations: [URL: UInt64] = [:]
     private let directory: URL
     private let files = FileManager.default
-    private static let pdfLimit = 20_000_000
+    static let pdfLimit = 20_000_000
+    static let pdfPageLimit = 30
     private static let imageLimit = 10_000_000
 
     init(directory: URL? = nil) {
@@ -261,7 +262,7 @@ struct CareDocuments {
             }
             guard !pdf.isEncrypted else { throw CareDocumentError.password }
             guard pdf.numberOfPages > 0 else { throw CareDocumentError.invalid }
-            guard pdf.numberOfPages <= 30 else { throw CareDocumentError.tooManyPages }
+            guard pdf.numberOfPages <= pdfPageLimit else { throw CareDocumentError.tooManyPages }
             for page in 1...pdf.numberOfPages where pdf.page(at: page) == nil { throw CareDocumentError.invalid }
             return .pdf
         }

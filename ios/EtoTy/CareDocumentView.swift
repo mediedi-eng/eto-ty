@@ -24,6 +24,11 @@ struct CareDocumentView: View {
     @DocumentState private var query = ""
     @DocumentState private var picker = false
     @DocumentState private var photo: PhotosPickerItem?
+    #if os(iOS)
+    @DocumentState private var cameraVisible = false
+    @DocumentState private var capture: CareCameraCapture?
+    @DocumentState private var cameraGeneration: UInt64?
+    #endif
     @DocumentState private var working = false
     @DocumentState private var preview: URL?
     @DocumentState private var pendingDelete: CareDocument?
@@ -53,6 +58,9 @@ struct CareDocumentView: View {
                 }
                 if working { ProgressView("Подготавливаем оригинал…") }
                 Section {
+                    #if os(iOS)
+                    Button { openCamera() } label: { Label("Сканировать документ", systemImage: "doc.viewfinder") }
+                    #endif
                     Button { picker = true } label: { Label("Выбрать файл", systemImage: "folder") }
                     PhotosPicker(selection: $photo, matching: .images, preferredItemEncoding: .current) {
                         Label("Выбрать фото", systemImage: "photo")
@@ -130,6 +138,18 @@ struct CareDocumentView: View {
         }
         .interactiveDismissDisabled(working)
         .onAppear { reload() }
+        #if os(iOS)
+        .fullScreenCover(isPresented: $cameraVisible, onDismiss: finishCamera) {
+            CareDocumentScanner { outcome in
+                switch outcome {
+                case .captured(let result): capture = result
+                case .cancelled: break
+                case .failed: notice = "Не удалось отсканировать документ. Повтори съёмку или выбери фото или файл."
+                }
+                cameraVisible = false
+            }.ignoresSafeArea()
+        }
+        #endif
         .fileImporter(isPresented: $picker, allowedContentTypes: [.pdf, .jpeg, .png, .heic, .heif]) { result in
             guard case .success(let url) = result else {
                 if case .failure(let error) = result, (error as NSError).code != NSUserCancelledError { show(error) }
@@ -176,6 +196,43 @@ struct CareDocumentView: View {
         } message: { document in Text(document.name) }
     }
 
+    #if os(iOS)
+    private func openCamera() {
+        guard !working else { return }
+        working = true
+        cameraGeneration = store.beginImport()
+        Task {
+            if let message = await CareDocumentScanner.accessMessage() {
+                notice = message
+                cameraGeneration = nil
+                working = false
+            } else {
+                cameraVisible = true
+            }
+        }
+    }
+
+    private func finishCamera() {
+        let result = capture
+        let generation = cameraGeneration
+        capture = nil
+        cameraGeneration = nil
+        guard let result, let generation else { working = false; return }
+        Task {
+            defer { working = false }
+            do {
+                let archive = store
+                let document = try await Task.detached {
+                    let pdf = try result.pdf()
+                    let date = Date().formatted(date: .abbreviated, time: .shortened)
+                    return try archive.add(pdf, name: "Скан от " + date + ".pdf", generation: generation)
+                }.value
+                finishedImport(document)
+            } catch is CancellationError {} catch { show(error) }
+        }
+    }
+    #endif
+
     private func importFile(_ url: URL) {
         guard !working else { return }
         working = true
@@ -217,7 +274,7 @@ struct CareDocumentView: View {
     }
 }
 
-private struct DocumentEvidenceEditor: View {
+struct DocumentEvidenceEditor: View {
     let document: CareDocument
     let store: CareDocuments
     @Environment(\.dismiss) private var dismiss
@@ -362,7 +419,7 @@ private struct DocumentEvidenceEditor: View {
 
 }
 
-private struct SourcePDFPage: Identifiable {
+struct SourcePDFPage: Identifiable {
     let url: URL
     let page: Int
     var id: Int { page }
@@ -378,13 +435,13 @@ private struct SourcePDFPage: Identifiable {
 }
 
 #if os(iOS)
-private struct SourcePDFPreview: UIViewRepresentable {
+struct SourcePDFPreview: UIViewRepresentable {
     let source: SourcePDFPage
     func makeUIView(context: Context) -> PDFView { source.makeView() }
     func updateUIView(_ view: PDFView, context: Context) {}
 }
 #elseif os(macOS)
-private struct SourcePDFPreview: NSViewRepresentable {
+struct SourcePDFPreview: NSViewRepresentable {
     let source: SourcePDFPage
     func makeNSView(context: Context) -> PDFView { source.makeView() }
     func updateNSView(_ view: PDFView, context: Context) {}
