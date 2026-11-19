@@ -45,7 +45,9 @@ struct PersonalBriefView: View {
                             file = nil
                             errorMessage = nil
                         }
-                    }.padding()
+                    }
+                    .padding()
+                    .accessibilityIdentifier("brief.preview.content")
                 } else {
                     selection
                 }
