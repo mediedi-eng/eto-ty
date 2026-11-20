@@ -15,8 +15,16 @@ final class CareJourneyUITests: XCTestCase {
         XCTAssertTrue(composer.waitForExistence(timeout: 10))
         let topic = "Prepare for my visit"
         composer.tap()
+        let keyboard = app.keyboards.firstMatch
+        if !keyboard.waitForExistence(timeout: 3) {
+            composer.tap()
+        }
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 8), "The composer must receive keyboard focus after closing prevention.")
         composer.typeText(topic)
-        app.buttons["care.send"].tap()
+        waitForValue(topic, of: composer)
+        let send = app.buttons["care.send"]
+        XCTAssertTrue(send.isEnabled)
+        send.tap()
 
         let sentMessage = app.descendants(matching: .any).matching(
             NSPredicate(format: "identifier == %@ AND label CONTAINS %@", "care.message.user", topic)
@@ -153,6 +161,9 @@ final class CareJourneyUITests: XCTestCase {
         if !start.isHittable { app.swipeDown() }
         XCTAssertTrue(start.waitForExistence(timeout: 5) && start.isHittable)
         start.tap()
+        // The underlying chat may already exist while the sheet is still dismissing.
+        let prevention = app.navigationBars["Что проверить?"]
+        XCTAssertTrue(prevention.waitForNonExistence(timeout: 10))
         XCTAssertTrue(app.buttons["Выбрать время"].waitForExistence(timeout: 5))
     }
 
