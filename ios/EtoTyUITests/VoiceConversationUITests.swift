@@ -10,10 +10,7 @@ final class VoiceConversationUITests: XCTestCase {
         app.launch()
 
         let elements = app.descendants(matching: .any)
-        let settings = app.buttons["care.cloud.settings"]
-        XCTAssertTrue(settings.waitForExistence(timeout: 8))
-        settings.tap()
-        app.buttons["Только на iPhone"].tap()
+        useLocalReplies(in: app)
         let composer = elements["care.composer"]
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
         let unedited = elements.matching(NSPredicate(format: "identifier == %@ AND label CONTAINS %@",
@@ -59,10 +56,7 @@ final class VoiceConversationUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments += ["--eto-ty-ui-test-voice", "--eto-ty-ui-test-native-tts"]
         app.launch()
-        let settings = app.buttons["care.cloud.settings"]
-        XCTAssertTrue(settings.waitForExistence(timeout: 8))
-        settings.tap()
-        app.buttons["Только на iPhone"].tap()
+        useLocalReplies(in: app)
         let call = app.buttons["care.voice.call"]
         call.tap()
         acceptLocalVoiceIfNeeded(in: app)
@@ -74,6 +68,18 @@ final class VoiceConversationUITests: XCTestCase {
         waitFor("listening", in: app.descendants(matching: .any)["care.voice.phase"])
         call.tap()
         XCTAssertTrue(app.buttons["care.voice.mic"].isEnabled)
+    }
+
+    private func useLocalReplies(in app: XCUIApplication) {
+        let settings = app.buttons["care.cloud.settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 10))
+        if settings.label == "Только на iPhone" { return }
+        settings.tap()
+        let option = app.buttons.matching(NSPredicate(
+            format: "label == %@ AND identifier != %@", "Только на iPhone", "care.cloud.settings"
+        )).firstMatch
+        XCTAssertTrue(option.waitForExistence(timeout: 5))
+        option.tap()
     }
 
     private func acceptLocalVoiceIfNeeded(in app: XCUIApplication) {
