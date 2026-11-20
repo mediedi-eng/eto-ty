@@ -131,6 +131,7 @@ if [ "$mode" = --smoke ] || [ "$mode" = --live-chat-smoke ]; then
     run_xcodebuild -resultBundlePath "$result_bundle" -destination "platform=iOS Simulator,id=$simulator" \
         -parallel-testing-enabled NO -only-testing:EtoTyUITests test
     python3 scripts/check_ios_smoke_result.py "$result_bundle"
+    python3 scripts/check_ios_smoke_result.py "$result_bundle" 'VoiceConversationUITests/testDictationAndHandsFreeInPersonalDialog()'
     exit 0
 fi
 
