@@ -6,7 +6,7 @@ private typealias ViewState<Value> = State<Value>
 private enum CareTab { case chat, level, map }
 
 private enum CareSheet: Hashable, Identifiable {
-    case schedule(Date?), documents(Region?), prevention, intent, brief(Region?), demo
+    case schedule(Date?), documents(Region?), prevention, intent, brief(Region?), demo, cloud
     case sourcePDF(URL, String, Int), editSource(String), incoming
 
     var id: Self { self }
@@ -122,6 +122,8 @@ struct PersonalCareView: View {
             PersonalBriefView(session: session, initialArea: area)
         case .intent:
             CareIntentView(onChoose: chooseRoute)
+        case .cloud:
+            CloudChatSettings(session: session)
         case .prevention:
             PersonalPreventionView(session: session, onExampleChoose: preventionAction) {
                 sheet = nil
@@ -181,9 +183,14 @@ struct PersonalCareView: View {
 
     private var chat: some View {
         VStack(spacing: 0) {
-            Text("Личный план на устройстве · без дежурного врача")
-                .font(.caption).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
+            HStack {
+                Text("Личный план · без дежурного врача")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button(session.cloudEnabled ? "ИИ · OpenRouter" : "Подключить ИИ") { sheet = .cloud }
+                    .font(.subheadline)
+                    .accessibilityIdentifier("care.cloud.settings")
+            }.padding(.horizontal)
             sessionFeedback
             ScrollViewReader { proxy in
                 ScrollView {
@@ -194,6 +201,9 @@ struct PersonalCareView: View {
                             ForEach(session.plan.messages) { message in
                                 CareBubble(message: message, accent: accent)
                                     .id(message.id)
+                                if message.id == session.plan.messages.last?.id, message.kind != nil {
+                                    conversationActions(for: message)
+                                }
                             }
                         }
                         if !showsWelcome && !session.plan.isAskingForUrgentHelp && !session.storageUnavailable {
@@ -243,9 +253,9 @@ struct PersonalCareView: View {
                     }.padding()
                 }
                 .scrollDismissesKeyboard(.interactively)
-                .onAppear { proxy.scrollTo("latest", anchor: .bottom) }
+                .onAppear { scrollToReply(proxy) }
                 .onChange(of: session.plan.messages.last?.id) { _, _ in
-                    proxy.scrollTo("latest", anchor: .bottom)
+                    scrollToReply(proxy)
                 }
                 .onChange(of: session.documentSuggestion?.id) { _, newID in
                     if newID != nil { proxy.scrollTo("latest", anchor: .bottom) }
@@ -287,6 +297,39 @@ struct PersonalCareView: View {
     private var showsWelcome: Bool {
         session.plan.topic == nil && session.plan.messages.count == 1 &&
             !session.plan.isAskingForUrgentHelp && !session.storageUnavailable
+    }
+
+    private func scrollToReply(_ proxy: ScrollViewProxy) {
+        if let reply = session.plan.messages.last, reply.kind != nil {
+            proxy.scrollTo(reply.id, anchor: .center)
+        } else {
+            proxy.scrollTo("latest", anchor: .bottom)
+        }
+    }
+
+    @ViewBuilder private func conversationActions(for reply: CareMessage) -> some View {
+        if session.generatingReplyID == reply.id {
+            HStack {
+                ProgressView()
+                Text(session.cloudEnabled ? "OpenRouter отвечает…" : "Готовлю ответ на iPhone…").font(.footnote)
+            }
+        }
+        if let issue = session.cloudIssue {
+            Text(issue).font(.footnote).foregroundStyle(.secondary)
+        }
+        if reply.kind != .greeting && reply.kind != .help,
+           let user = session.plan.messages.dropLast().last, user.fromUser {
+            HStack {
+                Button("В вопрос врачу") {
+                    if questionDraft.isEmpty { questionDraft = user.text }
+                    startVisitQuestion()
+                }
+                if session.plan.canStartPreparationGoal {
+                    Button("Сделать делом") { session.makeConversationTopic(replyID: reply.id) }
+                }
+            }
+            .buttonStyle(.bordered)
+        }
     }
 
     private var welcomeCard: some View {
@@ -522,7 +565,7 @@ struct PersonalCareView: View {
             return
         }
         let before = session.plan.messages.last?.id
-        session.send(draft)
+        session.send(draft, conversation: true)
         if session.plan.messages.last?.id != before {
             draft = ""
             showSavedVisitQuestion = false
@@ -721,7 +764,7 @@ private struct CareBubble: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(message.fromUser ? "Ты" : "Это ты")
+            Text(author)
                 .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             Text(message.text).textSelection(.enabled)
         }.padding(12)
@@ -730,6 +773,16 @@ private struct CareBubble: View {
             .frame(maxWidth: .infinity, alignment: message.fromUser ? .trailing : .leading)
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier(message.fromUser ? "care.message.user" : "care.message.service")
+    }
+
+    private var author: String {
+        if message.fromUser { return "Ты" }
+        switch message.kind {
+        case .cloud: return "ИИ · OpenRouter"
+        case .model: return "ИИ на iPhone"
+        case nil: return "Это ты"
+        default: return "Помощник · встроенный ответ"
+        }
     }
 }
 

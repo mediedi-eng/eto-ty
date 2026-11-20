@@ -7,6 +7,23 @@ enum CareChecks {
         let laterDate = firstDate.addingTimeInterval(600)
         var plan = CarePlan()
         let initial = plan
+        var chat = initial
+        chat.receive("Привет!", now: now, conversation: true)
+        precondition(chat.messages.last?.kind == .greeting && chat.topic == nil && chat.nextContact == nil)
+        chat.receive("Плохо сплю", now: now, conversation: true)
+        precondition(chat.messages.last?.kind == .sleep)
+        chat = try roundTrip(chat)
+        chat.receive("Просыпаюсь ночью", now: now, conversation: true)
+        precondition(chat.messages.last?.kind == .followUp && chat.topic == nil && chat.lastAnswer == nil)
+        let replyID = chat.messages.last!.id
+        chat.makeConversationTopic(replyID: replyID, now: now)
+        precondition(chat.topic == "Просыпаюсь ночью" && chat.nextContact == nil)
+        chat.replaceConversationReply(id: replyID, with: "Stale generation")
+        precondition(chat.messages.last?.text != "Stale generation")
+        chat.receive("Привет, как дела?", now: now, conversation: true)
+        precondition(chat.messages.last?.kind == .greeting && chat.topic == "Просыпаюсь ночью")
+        chat.receive("Вызови скорую", now: now, conversation: true)
+        precondition(chat.messages.last?.kind == nil && chat.isAskingForUrgentHelp)
         precondition(plan.topic == nil && plan.messages.count == 1)
         plan.receive(" \n", now: now)
         plan.schedule(at: firstDate, now: now)

@@ -66,6 +66,16 @@ final class CareJourneyUITests: XCTestCase {
 
         seedSyntheticDocument(in: app)
         checkBriefFromBodyMap(in: app)
+        app.terminate()
+        app.launch()
+        composer.tap()
+        composer.typeText("Привет!")
+        app.buttons["care.send"].tap()
+        let greeting = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier == %@ AND label CONTAINS %@", "care.message.service", "Привет!")
+        ).firstMatch
+        XCTAssertTrue(greeting.waitForExistence(timeout: 8))
+        XCTAssertTrue(greeting.isHittable)
     }
 
     @MainActor
@@ -76,6 +86,12 @@ final class CareJourneyUITests: XCTestCase {
         firstScreen.name = "Founder-preview-dialog"
         firstScreen.lifetime = .keepAlways
         add(firstScreen)
+
+        app.buttons["care.cloud.settings"].tap()
+        XCTAssertTrue(app.navigationBars["Облачный диалог"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.secureTextFields["Вставь ключ"].exists)
+        XCTAssertFalse(app.buttons["Подключить и отправлять новые реплики"].isEnabled)
+        app.buttons["Закрыть"].tap()
 
         start.tap()
         let composer = app.descendants(matching: .any)["care.composer"]
