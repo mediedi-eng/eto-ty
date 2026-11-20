@@ -365,24 +365,30 @@ struct PersonalCareView: View {
                     .focused($composing).lineLimit(1...5)
                     .padding(10).background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 14))
                     .accessibilityIdentifier("care.composer")
-                    #if os(iOS)
-                    .disabled(voice.mode != .idle)
+                    .disabled(voiceIsActive)
+                #if os(iOS)
                 voiceMicButton
-                    #endif
+                #endif
                 Button(action: send) {
                     Image(systemName: writingVisitQuestion ? "checkmark.circle.fill" : "arrow.up.circle.fill")
                         .font(.title).frame(minWidth: 44, minHeight: 44)
                 }
                 .disabled((writingVisitQuestion ? questionDraft : draft).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                #if os(iOS)
-                .disabled(voice.mode != .idle)
-                #endif
+                .disabled(voiceIsActive)
                 .accessibilityLabel(writingVisitQuestion ? "Сохранить вопрос врачу" : "Отправить сообщение")
                 .accessibilityIdentifier("care.send")
             }
             .disabled(session.storageUnavailable)
             .padding(.horizontal, 10).padding(.vertical, 6)
         }
+    }
+
+    private var voiceIsActive: Bool {
+        #if os(iOS)
+        return voice.mode != .idle
+        #else
+        return false
+        #endif
     }
 
     #if os(iOS)

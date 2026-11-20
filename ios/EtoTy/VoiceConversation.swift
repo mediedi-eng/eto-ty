@@ -3,7 +3,7 @@ import Foundation
 
 @MainActor
 protocol VoiceAudioDriving: AnyObject {
-    func listen(allowNetwork: Bool, onPartial: @escaping (String) -> Void,
+    func listen(allowNetwork: Bool, endOnSilence: Bool, onPartial: @escaping (String) -> Void,
                 onFinal: @escaping (String) -> Void, onError: @escaping (String) -> Void)
     func finishListening()
     func speak(_ text: String, onFinished: @escaping () -> Void, onError: @escaping (String) -> Void)
@@ -103,7 +103,7 @@ final class VoiceConversation: ObservableObject {
         turn = current
         phase = .listening
         transcript = ""
-        audio.listen(allowNetwork: allowNetwork, onPartial: { [weak self] text in
+        audio.listen(allowNetwork: allowNetwork, endOnSilence: mode == .conversation, onPartial: { [weak self] text in
             guard let self, self.turn == current, self.phase == .listening else { return }
             self.transcript = text
             self.dictationOutput?(text)

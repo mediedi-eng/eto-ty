@@ -88,7 +88,7 @@ final class VoiceAudio: NSObject, AVSpeechSynthesizerDelegate {
         if ownsSession { try? audio.setActive(false, options: .notifyOthersOnDeactivation) }
     }
 
-    func listen(allowNetwork: Bool, onPartial: @escaping (String) -> Void,
+    func listen(allowNetwork: Bool, endOnSilence: Bool, onPartial: @escaping (String) -> Void,
                 onFinal: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
         stop()
         let id = token
@@ -109,11 +109,11 @@ final class VoiceAudio: NSObject, AVSpeechSynthesizerDelegate {
                 self.fail("Разреши распознавание речи для «Это ты» в настройках iPhone.")
                 return
             }
-            self.startCapture(id, allowNetwork: allowNetwork)
+            self.startCapture(id, allowNetwork: allowNetwork, endOnSilence: endOnSilence)
         }
     }
 
-    private func startCapture(_ id: UUID, allowNetwork: Bool) {
+    private func startCapture(_ id: UUID, allowNetwork: Bool, endOnSilence: Bool) {
         guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "ru-RU")),
               recognizer.isAvailable else {
             fail("Русское распознавание речи сейчас недоступно на этом iPhone.")
@@ -165,24 +165,22 @@ final class VoiceAudio: NSObject, AVSpeechSynthesizerDelegate {
             }
             capture.prepare()
             try capture.start()
-            monitorSilence(id, from: uptime)
+            monitorSilence(id, from: uptime, endOnSilence: endOnSilence)
         } catch {
             fail("Не удалось включить микрофон. Проверь доступ и повтори запись.")
         }
     }
 
-    private func monitorSilence(_ id: UUID, from start: TimeInterval) {
+    private func monitorSilence(_ id: UUID, from start: TimeInterval, endOnSilence: Bool) {
         timer = Task { [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(nanoseconds: 250_000_000) } catch { return }
                 guard let self, self.token == id else { return }
                 let now = self.uptime
-                if self.lastText.isEmpty && now - start >= 12 {
-                    self.finishListening()
-                    return
-                }
                 let activity = max(self.lastPartialAt, self.input?.latestSound() ?? 0)
-                if now - start >= 55 || (!self.lastText.isEmpty && now - activity >= 1.8) {
+                let noSpeech = activity < start && now - start >= 12
+                let endOfTurn = endOnSilence && activity >= start && now - activity >= 1.8
+                if noSpeech || endOfTurn || now - start >= 55 {
                     self.finishListening()
                     return
                 }

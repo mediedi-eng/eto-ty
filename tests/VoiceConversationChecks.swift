@@ -9,10 +9,12 @@ private final class VoiceAudioProbe: VoiceAudioDriving {
     var spoken: [String] = []
     var networkFlags: [Bool] = []
     var finishRequests = 0
+    var silenceFlags: [Bool] = []
 
-    func listen(allowNetwork: Bool, onPartial: @escaping (String) -> Void,
+    func listen(allowNetwork: Bool, endOnSilence: Bool, onPartial: @escaping (String) -> Void,
                 onFinal: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
         networkFlags.append(allowNetwork)
+        silenceFlags.append(endOnSilence)
         partial = onPartial
         final = onFinal
         failure = onError
@@ -42,7 +44,7 @@ enum VoiceConversationChecks {
         voice.finishListening()
         audio.final?("Привет")
         oldFinal("Лишняя копия")
-        precondition(edits == ["Прив", "Привет"] && voice.mode == .idle && audio.finishRequests == 1)
+        precondition(edits == ["Прив", "Привет"] && voice.mode == .idle && audio.finishRequests == 1 && audio.silenceFlags == [false])
         precondition(audio.spoken.isEmpty && audio.networkFlags == [false])
 
         let suite = "voice-tests." + UUID().uuidString
@@ -62,6 +64,7 @@ enum VoiceConversationChecks {
         audio.partial?("При")
         precondition(session.plan.messages.count == 1)
         audio.final?("Привет")
+        precondition(audio.silenceFlags.last == true)
         let voiceReply = session.plan.messages.last!.id
         precondition(voice.phase == .waiting && session.pendingCloudIDs.contains(voiceReply))
         // A newer local command and unrelated archive reply must not get voiced.

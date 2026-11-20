@@ -4,42 +4,26 @@ import Foundation
 /// Drives the real conversation UI in a fresh simulator without opening its microphone.
 @MainActor
 final class UITestVoiceAudio: VoiceAudioDriving {
-    private var capture = 0
+    private var greeted = false
     private var work: Task<Void, Never>?
     private var finishCapture: (() -> Void)?
     private let realSpeech: VoiceAudio? = ProcessInfo.processInfo.arguments.contains("--eto-ty-ui-test-native-tts")
         ? VoiceAudio() : nil
 
-    func listen(allowNetwork: Bool, onPartial: @escaping (String) -> Void,
+    func listen(allowNetwork: Bool, endOnSilence: Bool, onPartial: @escaping (String) -> Void,
                 onFinal: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
         stop()
-        capture += 1
-        if realSpeech != nil {
-            if capture == 1 {
-                work = Task {
-                    do { try await Task.sleep(nanoseconds: 450_000_000) } catch { return }
-                    onFinal("Привет!")
-                }
-            } else {
-                // A distinct partial proves a second listening turn began after Apple's completion callback.
-                onPartial("Второй тестовый ход")
-            }
-            return
-        }
-        switch capture {
-        case 1:
-            // Manual dictation only finishes when the user taps the microphone again.
+        if !endOnSilence {
             finishCapture = { onFinal("Тест диктовки.") }
             onPartial("Тест диктовки")
-        case 2:
-            // In conversation mode the recognizer signals the end of an utterance.
+        } else if !greeted {
+            greeted = true
             work = Task {
                 do { try await Task.sleep(nanoseconds: 450_000_000) } catch { return }
                 onFinal("Привет!")
             }
-        default:
-            // Wait in silence so the test can hang up the next listening turn.
-            break
+        } else {
+            onPartial("Второй тестовый ход")
         }
     }
 
