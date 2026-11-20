@@ -27,6 +27,10 @@ enum SessionChecks {
         let delivery = SessionReminderProbe()
         try await checkCloudTransport()
         let chatStorage = CareStorage(directory: root.appendingPathComponent("chat"))
+        let suite = "chat-checks." + UUID().uuidString
+        let preferences = UserDefaults(suiteName: suite)!
+        defer { preferences.removePersistentDomain(forName: suite) }
+        preferences.set(false, forKey: "personal-chat.openrouter.enabled.v1")
         var modelTurns = 0
         let chat = CareSession(storage: chatStorage, documents: docs, reminders: SessionReminderProbe(),
                                liveClock: false, generateReply: { history in
@@ -34,33 +38,58 @@ enum SessionChecks {
             precondition(history.last?.fromUser == true && history.last?.text == "Хочу поговорить")
             precondition(history.contains(where: { $0.kind == .greeting }))
             return "О чём ты хочешь поговорить?"
+        }, preferences: preferences, cloudReply: { _, _ in
+            preconditionFailure("Local-only conversations must stay on the device")
         })
+        precondition(!chat.cloudEnabled)
         chat.send("Привет", conversation: true)
         precondition(chat.plan.topic == nil && chat.generatingReplyID == nil)
         chat.send("Хочу поговорить", conversation: true)
         try await waitUntil { chat.plan.messages.last?.kind == .model }
         precondition(modelTurns == 1 && tryLoad(chatStorage)?.messages.last?.text == "О чём ты хочешь поговорить?")
         // Reopen a populated local profile. Only messages deliberately sent in cloud mode may leave.
+        preferences.removeObject(forKey: "personal-chat.openrouter.enabled.v1")
         var cloudCalls = 0
         let online = CareSession(storage: chatStorage, documents: docs, reminders: SessionReminderProbe(),
-                                 liveClock: false, cloudEnabled: true) { text, history in
+                                 liveClock: false, preferences: preferences) { text, history in
             cloudCalls += 1
-            if cloudCalls == 1 { precondition(history.isEmpty && text == "Привет!") }
-            else {
+            switch cloudCalls {
+            case 1:
+                precondition(history.isEmpty && text == "Привет!")
+                return "Привет из тестового API"
+            case 2:
+                precondition(text == "Люблю читать" && history.map(\.role) == ["user", "assistant"])
                 precondition(history.map(\.content) == ["Привет!", "Привет из тестового API"])
+                return "Какие книги тебе нравятся?"
+            case 3:
+                precondition(history.count == 4)
                 throw CloudChatError.limit
+            default:
+                precondition(history.isEmpty && text == "Начнём снова")
+                return "Хорошо"
             }
-            return "Привет из тестового API"
         }
+        precondition(online.cloudEnabled && cloudCalls == 0)
         online.send("Привет!", conversation: true)
-        try await waitUntil { online.plan.messages.last?.kind == .cloud }
+        try await waitUntil { online.plan.messages.last?.kind == .service }
+        online.send("Люблю читать", conversation: true)
+        try await waitUntil { online.plan.messages.last?.text == "Какие книги тебе нравятся?" }
         precondition(online.plan.topic == nil && online.plan.nextContact == nil)
         online.send("Плохо сплю", conversation: true)
         try await waitUntil { online.cloudIssue != nil }
-        precondition(online.plan.messages.last?.kind == .sleep && cloudCalls == 2)
+        precondition(online.plan.messages.last?.kind == .sleep && cloudCalls == 3)
         online.send("Покажи мои документы", conversation: true)
         online.send("Вызови скорую", conversation: true)
-        precondition(online.generatingReplyID == nil && cloudCalls == 2 && online.plan.isAskingForUrgentHelp)
+        precondition(online.generatingReplyID == nil && cloudCalls == 3 && online.plan.isAskingForUrgentHelp)
+        online.setCloudEnabled(false)
+        online.send("Привет", conversation: true)
+        precondition(online.plan.messages.last?.kind == .greeting && cloudCalls == 3)
+        let reopened = CareSession(storage: chatStorage, documents: docs, reminders: SessionReminderProbe(),
+                                   liveClock: false, preferences: preferences)
+        precondition(!reopened.cloudEnabled)
+        online.setCloudEnabled(true)
+        online.send("Начнём снова", conversation: true)
+        try await waitUntil { online.plan.messages.last?.text == "Хорошо" }
         var instant = Date(timeIntervalSince1970: 1_900_000_000)
         let session = CareSession(storage: storage, documents: docs, reminders: delivery,
                                   now: { instant }, liveClock: false)
@@ -167,28 +196,33 @@ enum SessionChecks {
 
     private static func checkCloudTransport() async throws {
         let previous = (0..<10).map { CloudConversation.Turn(role: $0.isMultiple(of: 2) ? "user" : "assistant", content: String($0)) }
-        let answer = try await CloudConversation.answer(to: "Привет", previous: previous, key: "test-fixture") { request in
-            precondition(request.url?.absoluteString == "https://openrouter.ai/api/v1/chat/completions")
-            precondition(request.value(forHTTPHeaderField: "Authorization") == "Bearer test-fixture")
+        let answer = try await CloudConversation.answer(to: "Привет", previous: previous) { request in
+            precondition(request.url?.absoluteString == "https://eto-ty-pilot-chat.sacredarbor.chatgpt.site/v1/chat")
+            precondition(request.httpMethod == "POST" && request.value(forHTTPHeaderField: "Content-Type") == "application/json")
+            precondition(request.value(forHTTPHeaderField: "Origin") == "https://eto-ty-pilot-chat.sacredarbor.chatgpt.site")
+            precondition(request.value(forHTTPHeaderField: "Accept") == "application/json")
+            precondition(request.value(forHTTPHeaderField: "User-Agent") == "EtoTy-iOS/1.0")
+            precondition(request.value(forHTTPHeaderField: "Authorization") == nil)
             let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
-            precondition(body["model"] as? String == "openrouter/free")
-            let routing = body["provider"] as! [String: Any]
-            precondition(routing["data_collection"] as? String == "deny")
-            let cost = routing["max_price"] as! [String: Int]
-            precondition(cost["prompt"] == 0 && cost["completion"] == 0)
-            let turns = body["messages"] as! [[String: String]]
-            precondition(turns.count == 8 && turns.first?["role"] == "system" && turns[1]["content"] == "4")
-            precondition(turns.last?["content"] == "Привет")
-            let sample = #"{"choices":[{"message":{"content":"Привет! Как дела?"}}]}"#
-            return (Data(sample.utf8), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            precondition(Set(body.keys) == ["message", "history"] && body["message"] as? String == "Привет")
+            let turns = body["history"] as! [[String: String]]
+            precondition(turns.count == 6 && turns.first == ["role": "user", "content": "4"])
+            return (Data(#"{"reply":"Привет! Как дела?"}"#.utf8),
+                    HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
         }
         precondition(answer == "Привет! Как дела?")
         do {
-            _ = try await CloudConversation.answer(to: "Пример", previous: [], key: "test-fixture") { request in
+            _ = try await CloudConversation.answer(to: "Пример", previous: []) { request in
                 (Data(), HTTPURLResponse(url: request.url!, statusCode: 429, httpVersion: nil, headerFields: nil)!)
             }
-            preconditionFailure("Free quota failure must not trigger a paid request")
+            preconditionFailure("The service budget must be respected")
         } catch CloudChatError.limit {}
+        do {
+            _ = try await CloudConversation.answer(to: String(repeating: "а", count: 4001), previous: []) { _ in
+                preconditionFailure("Oversized input must stay on the device")
+            }
+            preconditionFailure("Oversized input must be rejected")
+        } catch CloudChatError.tooLong {}
     }
 
     private static func tryLoad(_ storage: CareStorage) -> CarePlan? {

@@ -88,10 +88,12 @@ final class CareJourneyUITests: XCTestCase {
         add(firstScreen)
 
         app.buttons["care.cloud.settings"].tap()
-        XCTAssertTrue(app.navigationBars["Облачный диалог"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.secureTextFields["Вставь ключ"].exists)
-        XCTAssertFalse(app.buttons["Подключить и отправлять новые реплики"].isEnabled)
-        app.buttons["Закрыть"].tap()
+        XCTAssertTrue(app.navigationBars["Приватность диалога"].waitForExistence(timeout: 5))
+        app.buttons["Сервис «Это ты»"].tap()
+        XCTAssertTrue(app.staticTexts["care.chat.disclosure"].waitForExistence(timeout: 5))
+        app.buttons["care.cloud.settings"].tap()
+        app.buttons["Только на iPhone"].tap()
+        XCTAssertFalse(app.staticTexts["care.chat.disclosure"].exists)
 
         start.tap()
         let composer = app.descendants(matching: .any)["care.composer"]
@@ -184,15 +186,26 @@ final class CareJourneyUITests: XCTestCase {
 
         app.buttons["brief.area"].tap()
         chooseBriefArea("Все области", in: app)
-        let document = app.switches.matching(NSPredicate(format: "label CONTAINS %@", "Example-report.png")).firstMatch
-        XCTAssertTrue(document.waitForExistence(timeout: 5))
-        waitForValue("0", of: document)
-        document.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
-        waitForValue("1", of: document)
+        func reportSwitch(in group: String) -> XCUIElement {
+            let row = app.switches.matching(NSPredicate(
+                format: "identifier == %@ AND label CONTAINS %@", group, "Example-report.png"
+            )).firstMatch
+            for _ in 0..<3 {
+                if row.exists && row.isHittable { break }
+                app.swipeUp()
+            }
+            XCTAssertTrue(row.waitForExistence(timeout: 8))
+            return row
+        }
+
+        let available = reportSwitch(in: "brief.document.available")
+        waitForValue("0", of: available)
+        available.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        waitForValue("1", of: reportSwitch(in: "brief.document.included"))
         XCTAssertTrue(preview.isEnabled)
         app.buttons["brief.area"].tap()
         chooseBriefArea("Почки", in: app)
-        waitForValue("1", of: document)
+        waitForValue("1", of: reportSwitch(in: "brief.document.included"))
         if !preview.isHittable { app.swipeUp() }
         preview.tap()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Example-report.png")).firstMatch.waitForExistence(timeout: 5))
