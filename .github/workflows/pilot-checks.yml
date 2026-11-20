@@ -58,6 +58,16 @@ jobs:
         run: swiftc -frontend -parse ios/EtoTy/*.swift ios/EtoTyUITests/*.swift
       - name: Test source confirmation, body map and visit selection
         run: sh tests/portable/check.sh
+  chat-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node --test server/chat/worker.test.mjs
   database:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
