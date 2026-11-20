@@ -4,8 +4,8 @@ set -eu
 cd "$(dirname "$0")"
 mode=${1:---open}
 case "$mode" in
-    --build|--smoke|--open) ;;
-    *) echo 'Usage: setup-iphone.command [--open|--build|--smoke]' >&2; exit 2 ;;
+    --build|--smoke|--live-chat-smoke|--open) ;;
+    *) echo 'Usage: setup-iphone.command [--open|--build|--smoke|--live-chat-smoke]' >&2; exit 2 ;;
 esac
 
 find_developer_dir() {
@@ -110,7 +110,7 @@ while :; do
     sleep 8
 done
 
-if [ "$mode" = --smoke ]; then
+if [ "$mode" = --smoke ] || [ "$mode" = --live-chat-smoke ]; then
     runtime=${selection% *}
     device_type=${selection#* }
     simulator=$(xcrun simctl create "EtoTy smoke $$" "$device_type" "$runtime")
@@ -120,6 +120,14 @@ if [ "$mode" = --smoke ]; then
     result_dir=$(mktemp -d "$PWD/local-data/ios-smoke/run.XXXXXX")
     result_bundle="$result_dir/Journey.xcresult"
     printf 'Отчёт этого запуска XCTest: %s\n' "$result_bundle"
+    if [ "$mode" = --live-chat-smoke ]; then
+        live_test=LiveConversationUITests/testTwoServiceRepliesSurviveRelaunch
+        run_xcodebuild -resultBundlePath "$result_bundle" -destination "platform=iOS Simulator,id=$simulator" \
+            -parallel-testing-enabled NO "-only-testing:EtoTyUITests/$live_test" \
+            'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) ETO_TY_LIVE_SMOKE' test
+        python3 scripts/check_ios_smoke_result.py "$result_bundle" "$live_test()"
+        exit 0
+    fi
     run_xcodebuild -resultBundlePath "$result_bundle" -destination "platform=iOS Simulator,id=$simulator" \
         -parallel-testing-enabled NO -only-testing:EtoTyUITests test
     python3 scripts/check_ios_smoke_result.py "$result_bundle"

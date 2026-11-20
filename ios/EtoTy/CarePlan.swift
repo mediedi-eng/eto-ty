@@ -382,8 +382,8 @@ struct CarePlan: Codable, Equatable {
     }
 
     mutating func replaceConversationReply(id: UUID, with text: String, kind: CareReplyKind = .model) {
-        guard let current = messages.last, current.id == id, current.kind != nil else { return }
-        messages[messages.count - 1] = CareMessage(text, at: current.createdAt, kind: kind, id: id)
+        guard let i = messages.firstIndex(where: { $0.id == id }), messages[i].kind != nil else { return }
+        messages[i] = CareMessage(text, at: messages[i].createdAt, kind: kind, id: id)
     }
 
     mutating func makeConversationTopic(replyID: UUID, now: Date) {

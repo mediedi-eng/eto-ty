@@ -2,11 +2,13 @@ import Foundation
 import Security
 
 enum CloudChatError: LocalizedError {
-    case tooLong, limit, unavailable, connection
+    case tooLong, limit, unavailable, connection, timedOut, saveFailed
 
     var errorDescription: String? {
         switch self {
         case .tooLong: return "Сократи сообщение до 4000 символов и отправь снова."
+        case .saveFailed: return "Ответ пришёл, но сохранить его не удалось."
+        case .timedOut: return "Ответ не пришёл за 25 секунд."
         case .limit: return "Лимит сообщений сервиса исчерпан. Попробуй позже."
         case .unavailable: return "Сервис «Это ты» временно недоступен. Попробуй позже."
         case .connection: return "Не удалось связаться с сервисом «Это ты». Проверь подключение."

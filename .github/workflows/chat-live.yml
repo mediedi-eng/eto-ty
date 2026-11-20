@@ -14,7 +14,6 @@ jobs:
         shell: python
         run: |
           import json
-          import re
           from urllib.error import HTTPError
           from urllib.request import Request, urlopen
           payload = json.dumps({"message": "Привет!", "history": []}).encode()
@@ -28,7 +27,25 @@ jobs:
                   assert isinstance(reply, str) and 0 < len(reply.strip()) <= 4000
                   print("Synthetic greeting received an assistant reply; characters:", len(reply))
           except HTTPError as error:
-              body = error.read(8192).decode(errors="replace")
               print("Service HTTP status:", error.code, "content type:", error.headers.get_content_type(), "server:", error.headers.get("Server"))
-              print("Response:", re.sub("<[^>]+>", " ", body)[:800])
               raise
+
+  iphone-dialog:
+    if: github.event_name == 'workflow_dispatch' || (github.event.label.name == 'verify-pilot-chat' && github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: macos-15-intel
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Send two synthetic messages from the iPhone simulator and verify delivery after relaunch
+        run: sh setup-iphone.command --live-chat-smoke
+      - name: Preserve the live simulator test result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-dialog-iphone
+          path: local-data/ios-smoke/*/Journey.xcresult
+          retention-days: 7

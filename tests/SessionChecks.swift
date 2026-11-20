@@ -76,7 +76,7 @@ enum SessionChecks {
         try await waitUntil { online.plan.messages.last?.text == "Какие книги тебе нравятся?" }
         precondition(online.plan.topic == nil && online.plan.nextContact == nil)
         online.send("Плохо сплю", conversation: true)
-        try await waitUntil { online.cloudIssue != nil }
+        try await waitUntil { !online.cloudIssues.isEmpty }
         precondition(online.plan.messages.last?.kind == .sleep && cloudCalls == 3)
         online.send("Покажи мои документы", conversation: true)
         online.send("Вызови скорую", conversation: true)
@@ -90,6 +90,7 @@ enum SessionChecks {
         online.setCloudEnabled(true)
         online.send("Начнём снова", conversation: true)
         try await waitUntil { online.plan.messages.last?.text == "Хорошо" }
+        try await checkOverlappingReplies(root: root, docs: docs, preferences: preferences)
         var instant = Date(timeIntervalSince1970: 1_900_000_000)
         let session = CareSession(storage: storage, documents: docs, reminders: delivery,
                                   now: { instant }, liveClock: false)
@@ -227,6 +228,55 @@ enum SessionChecks {
 
     private static func tryLoad(_ storage: CareStorage) -> CarePlan? {
         do { return try storage.load() } catch { preconditionFailure("Unexpected profile read failure") }
+    }
+
+    @MainActor
+    private static func checkOverlappingReplies(root: URL, docs: CareDocuments, preferences: UserDefaults) async throws {
+        let storage = CareStorage(directory: root.appendingPathComponent("overlap"))
+        var first: CheckedContinuation<String, Never>?
+        let session = CareSession(storage: storage, documents: docs, reminders: SessionReminderProbe(),
+                                  liveClock: false, preferences: preferences) { input, history in
+            if input == "Привет" {
+                precondition(history.isEmpty)
+                return await withCheckedContinuation { first = $0 }
+            }
+            precondition(history.map(\.content) == ["Привет", "Первый ответ"])
+            return "Второй ответ"
+        }
+        session.send("Привет", conversation: true)
+        let firstID = session.plan.messages.last!.id
+        session.send("Мой второй вопрос", conversation: true)
+        let secondID = session.plan.messages.last!.id
+        session.send("Покажи мои документы", conversation: true)
+        precondition(session.pendingCloudIDs == [firstID, secondID])
+        try await waitUntil { first != nil }
+        first!.resume(returning: "Первый ответ")
+        try await waitUntil { session.pendingCloudIDs.isEmpty }
+        let answers = tryLoad(storage)!.messages.filter { $0.kind == .service }
+        precondition(answers.map(\.id) == [firstID, secondID])
+        precondition(answers.map(\.text) == ["Первый ответ", "Второй ответ"])
+        precondition(session.plan.messages.last?.kind == nil && session.cloudIssues.isEmpty)
+
+        // A transport may finish after cancellation. A late response must not overwrite its retry.
+        let retryStorage = CareStorage(directory: root.appendingPathComponent("retry"))
+        var late: CheckedContinuation<String, Never>?
+        var calls = 0
+        let retry = CareSession(storage: retryStorage, documents: docs, reminders: SessionReminderProbe(),
+                                liveClock: false, preferences: preferences, replyDeadline: 50_000_000) { _, _ in
+            calls += 1
+            if calls == 1 { return await withCheckedContinuation { late = $0 } }
+            return "Ответ после повтора"
+        }
+        retry.send("Привет", conversation: true)
+        let id = retry.plan.messages.last!.id
+        try await waitUntil { retry.cloudIssues[id] == .timedOut }
+        precondition(retry.pendingCloudIDs.isEmpty && late != nil)
+        retry.retryCloudReply(id)
+        try await waitUntil { retry.plan.messages.last?.kind == .service }
+        late!.resume(returning: "Устаревший ответ")
+        await Task.yield()
+        precondition(retry.plan.messages.last?.text == "Ответ после повтора")
+        precondition(retry.plan.messages.count == 3 && retry.cloudIssues.isEmpty && calls == 2)
     }
 
     @MainActor
