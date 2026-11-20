@@ -9,7 +9,7 @@ private enum CareSheet: Hashable, Identifiable {
     case schedule(Date?), documents(Region?), prevention, intent, brief(Region?), demo, cloud
     case sourcePDF(URL, String, Int), editSource(String), incoming
     #if os(iOS)
-    case voiceConsent(ChatVoiceAction)
+    case voiceConsent(ChatVoiceAction, online: Bool)
     #endif
 
     var id: Self { self }
@@ -32,10 +32,11 @@ struct PersonalCareView: View {
     @Environment(\.colorScheme) private var scheme
     #if os(iOS)
     @StateObject private var voice = VoiceConversation()
-    @AppStorage(SpeechPrivacyChoice.key) private var speechPrivacy = SpeechPrivacyChoice.ask
+    @AppStorage("personal.voice.dictation.local.explained") private var localDictationExplained = false
+    @AppStorage(RecordedVoiceConsent.dictation) private var recordedDictationAllowed = false
+    @AppStorage(RecordedVoiceConsent.conversation) private var recordedConversationAllowed = false
     @AppStorage("personal.voice.talk.local.explained") private var localTalkExplained = false
-    @AppStorage("personal.voice.talk.online.explained") private var onlineTalkExplained = false
-    @ViewState private var voiceAfterDismiss: ChatVoiceAction?
+    @ViewState private var voiceAfterDismiss: (action: ChatVoiceAction, online: Bool)?
     @Environment(\.scenePhase) private var voiceScene
     #endif
 
@@ -93,9 +94,11 @@ struct PersonalCareView: View {
             session.refreshDocuments()
             presentIncomingWhenReady()
             #if os(iOS)
-            if let action = voiceAfterDismiss {
+            if let pending = voiceAfterDismiss {
                 voiceAfterDismiss = nil
-                if sheet == nil && tab == .chat && voiceScene == .active { beginVoice(action) }
+                if sheet == nil && tab == .chat && voiceScene == .active && session.cloudEnabled == pending.online {
+                    beginVoice(pending.action)
+                }
             }
             #endif
         }, content: sheetContent)
@@ -148,13 +151,17 @@ struct PersonalCareView: View {
     @ViewBuilder private func sheetContent(_ destination: CareSheet) -> some View {
         switch destination {
         #if os(iOS)
-        case .voiceConsent(let action):
-            ChatVoiceConsent(action: action, online: session.cloudEnabled) { choice in
-                speechPrivacy = choice
-                if action == .talk {
-                    if session.cloudEnabled { onlineTalkExplained = true } else { localTalkExplained = true }
+        case .voiceConsent(let action, let online):
+            ChatVoiceConsent(action: action, online: online) {
+                guard session.cloudEnabled == online else { sheet = nil; return }
+                if online {
+                    if action == .talk { recordedConversationAllowed = true }
+                    else { recordedDictationAllowed = true }
+                } else {
+                    if action == .talk { localTalkExplained = true }
+                    else { localDictationExplained = true }
                 }
-                voiceAfterDismiss = action
+                voiceAfterDismiss = (action, online)
                 sheet = nil
             }
         #endif
@@ -399,9 +406,16 @@ struct PersonalCareView: View {
             Image(systemName: voice.mode == .dictation ? "stop.circle.fill" : "mic.fill")
                 .font(.title3).frame(minWidth: 44, minHeight: 44)
         }
-        .disabled(voice.mode == .conversation)
-        .accessibilityLabel(voice.mode == .dictation ? "Закончить диктовку" : "Продиктовать сообщение")
+        .disabled(voice.mode == .conversation || voice.phase == .preparing || voice.phase == .transcribing)
+        .accessibilityLabel(voiceMicLabel)
         .accessibilityIdentifier("care.voice.mic")
+    }
+
+    private var voiceMicLabel: String {
+        if session.cloudEnabled {
+            return voice.mode == .dictation ? "Закончить запись" : "Записать голосовое"
+        }
+        return voice.mode == .dictation ? "Закончить диктовку" : "Продиктовать сообщение"
     }
 
     private var voiceCallButton: some View {
@@ -419,24 +433,27 @@ struct PersonalCareView: View {
     private func requestVoice(_ action: ChatVoiceAction) {
         composing = false
         voice.clearIssue()
-        let explainTalk = action == .talk && !(session.cloudEnabled ? onlineTalkExplained : localTalkExplained)
-        if speechPrivacy == .ask || explainTalk {
-            sheet = .voiceConsent(action)
+        if !voicePermission(for: action) {
+            sheet = .voiceConsent(action, online: session.cloudEnabled)
         } else {
             beginVoice(action)
         }
     }
 
+    private func voicePermission(for action: ChatVoiceAction) -> Bool {
+        if session.cloudEnabled { return action == .talk ? recordedConversationAllowed : recordedDictationAllowed }
+        return action == .talk ? localTalkExplained : localDictationExplained
+    }
+
     private func beginVoice(_ action: ChatVoiceAction) {
-        guard !session.storageUnavailable else { return }
-        let allowNetwork = speechPrivacy == .appleIfNeeded && session.cloudEnabled
+        guard !session.storageUnavailable, voicePermission(for: action) else { return }
         if action == .talk {
-            voice.startConversation(session: session, allowNetwork: allowNetwork)
+            voice.startConversation(session: session)
         } else {
             let forQuestion = writingVisitQuestion
             let prefix = forQuestion ? questionDraft : draft
             // Recognition partials replace the same segment, keeping any earlier typed text.
-            voice.startDictation(allowNetwork: allowNetwork) { words in
+            voice.startDictation(useRecording: session.cloudEnabled) { words in
                 let separator = !prefix.isEmpty && !words.isEmpty && prefix.last?.isWhitespace == false ? " " : ""
                 let text = prefix + separator + words
                 if forQuestion { questionDraft = text } else { draft = text }

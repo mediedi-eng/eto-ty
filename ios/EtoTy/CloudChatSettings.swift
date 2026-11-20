@@ -5,7 +5,8 @@ struct CloudChatSettings: View {
     @Environment(\.dismiss) private var dismiss
 
     #if os(iOS)
-    @AppStorage(SpeechPrivacyChoice.key) private var speechPrivacy = SpeechPrivacyChoice.ask
+    @AppStorage(RecordedVoiceConsent.dictation) private var recordedDictationAllowed = false
+    @AppStorage(RecordedVoiceConsent.conversation) private var recordedConversationAllowed = false
     #endif
 
     var body: some View {
@@ -17,14 +18,15 @@ struct CloudChatSettings: View {
                 }
                 #if os(iOS)
                 if session.cloudEnabled {
-                    Section {
-                        Picker("Распознавание речи", selection: $speechPrivacy) {
-                            Text("Спросить при включении").tag(SpeechPrivacyChoice.ask)
-                            Text("На iPhone").tag(SpeechPrivacyChoice.device)
-                            Text("Разрешить сервис Apple").tag(SpeechPrivacyChoice.appleIfNeeded)
+                    Section("Голос") {
+                        if recordedDictationAllowed {
+                            Button("Сбросить разрешение для диктовки") { recordedDictationAllowed = false }
                         }
-                    } footer: {
-                        Text("С разрешением сервиса Apple звук может обрабатываться на серверах Apple, если локальное распознавание недоступно.")
+                        if recordedConversationAllowed {
+                            Button("Сбросить разрешение для голосового разговора") { recordedConversationAllowed = false }
+                        }
+                        Text("С твоего разрешения записи отправляются в OpenAI для расшифровки. В диктовке результат попадает в черновик, в голосовом разговоре отправляется сразу.")
+                            .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
                 #endif

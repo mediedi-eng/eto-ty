@@ -10,7 +10,7 @@ final class UITestVoiceAudio: VoiceAudioDriving {
     private let realSpeech: VoiceAudio? = ProcessInfo.processInfo.arguments.contains("--eto-ty-ui-test-native-tts")
         ? VoiceAudio() : nil
 
-    func listen(allowNetwork: Bool, endOnSilence: Bool, onPartial: @escaping (String) -> Void,
+    func listen(endOnSilence: Bool, onPartial: @escaping (String) -> Void,
                 onFinal: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
         stop()
         if !endOnSilence {
@@ -54,6 +54,48 @@ final class UITestVoiceAudio: VoiceAudioDriving {
         realSpeech?.stop()
         work = nil
         finishCapture = nil
+    }
+}
+
+/// Emits the same recording/upload boundary as the real service without using its microphone or network.
+@MainActor
+final class UITestRecordedVoiceAudio: RecordedVoiceDriving {
+    private var work: Task<Void, Never>?
+    private var finish: (() -> Void)?
+    private var didGreet = false
+
+    func listen(endOnSilence: Bool, onRecordingStarted: @escaping () -> Void,
+                onTranscribing: @escaping () -> Void,
+                onFinal: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
+        stop()
+        onRecordingStarted()
+        finish = { [weak self] in
+            guard let self else { return }
+            onTranscribing()
+            self.work = Task {
+                do { try await Task.sleep(nanoseconds: 1_500_000_000) } catch { return }
+                onFinal(endOnSilence ? "Привет!" : "Тест диктовки.")
+            }
+        }
+        if endOnSilence && !didGreet {
+            didGreet = true
+            work = Task { [weak self] in
+                do { try await Task.sleep(nanoseconds: 1_000_000_000) } catch { return }
+                self?.finishListening()
+            }
+        }
+    }
+
+    func finishListening() {
+        let action = finish
+        finish = nil
+        action?()
+    }
+
+    func stop() {
+        work?.cancel()
+        work = nil
+        finish = nil
     }
 }
 #endif

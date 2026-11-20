@@ -26,6 +26,7 @@ enum SessionChecks {
         let docs = CareDocuments(directory: root.appendingPathComponent("files"))
         let delivery = SessionReminderProbe()
         try await checkCloudTransport()
+        try await checkVoiceTransport()
         try await VoiceConversationChecks.run(storage: CareStorage(directory: root.appendingPathComponent("voice")),
                                               docs: docs, reminders: SessionReminderProbe())
         let chatStorage = CareStorage(directory: root.appendingPathComponent("chat"))
@@ -226,6 +227,75 @@ enum SessionChecks {
             }
             preconditionFailure("Oversized input must be rejected")
         } catch CloudChatError.tooLong {}
+    }
+
+    private static func checkVoiceTransport() async throws {
+        let sample = Data([0, 0, 0, 16, 0x66, 0x74, 0x79, 0x70, 0x4D, 0x34, 0x41, 0x20])
+        func response(_ request: URLRequest, _ status: Int) -> HTTPURLResponse {
+            HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+        }
+        let transcript = try await VoiceTranscription.transcribe(sample) { request in
+            precondition(request.url?.absoluteString == CloudConversation.origin + "/v1/transcribe")
+            precondition(request.httpMethod == "POST" && request.httpBody == sample)
+            precondition(request.value(forHTTPHeaderField: "Content-Type") == "audio/mp4")
+            precondition(request.value(forHTTPHeaderField: "Accept") == "application/json")
+            precondition(request.value(forHTTPHeaderField: "Origin") == CloudConversation.origin)
+            precondition(request.value(forHTTPHeaderField: "Authorization") == nil)
+            precondition(request.value(forHTTPHeaderField: "Cookie") == nil)
+            return (Data(#"{"text":"  Тестовый голос.  "}"#.utf8), response(request, 200))
+        }
+        precondition(transcript == "Тестовый голос.")
+        let failures: [(Int, String, VoiceTranscriptionError)] = [
+            (429, "{}", .limit), (413, "{}", .tooLarge), (415, "{}", .invalidClip),
+            (422, #"{"error":"transcript_too_long"}"#, .tooMuchText), (422, "{}", .empty),
+            (503, "{}", .unavailable), (307, "{}", .unavailable), (200, "{}", .unavailable),
+            (200, #"{"text":" "}"#, .empty),
+            (200, #"{"text":""# + String(repeating: "а", count: 4001) + #""}"#, .tooMuchText)
+        ]
+        for (status, payload, expected) in failures {
+            do {
+                _ = try await VoiceTranscription.transcribe(sample) { (Data(payload.utf8), response($0, status)) }
+                preconditionFailure("Invalid audio response returned text")
+            } catch let error as VoiceTranscriptionError { precondition(error == expected) }
+        }
+        for (bytes, expected) in [(Data(), VoiceTranscriptionError.empty),
+                                  (Data(count: VoiceTranscription.maximumBytes + 1), .tooLarge)] {
+            do {
+                _ = try await VoiceTranscription.transcribe(bytes) { _ in
+                    preconditionFailure("Empty or oversized audio must stay on the device")
+                }
+                preconditionFailure("Expected local size validation")
+            } catch let error as VoiceTranscriptionError { precondition(error == expected) }
+        }
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("synthetic.m4a")
+        try sample.write(to: file)
+        let bytes = try await VoiceTranscription.consumeClip(file)
+        precondition(bytes == sample && !FileManager.default.fileExists(atPath: file.path))
+
+        try sample.write(to: file)
+        let leftRecording = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            let stale = try await VoiceTranscription.consumeClip(file)
+            return try await VoiceTranscription.transcribe(stale) { _ in
+                preconditionFailure("A cancelled clip must never reach the service")
+            }
+        }
+        do { _ = try await leftRecording.value; preconditionFailure("Cancelled recording was submitted") }
+        catch is CancellationError {}
+        precondition(!FileManager.default.fileExists(atPath: file.path))
+
+        let leftTranscription = Task {
+            try await VoiceTranscription.transcribe(sample) { request in
+                withUnsafeCurrentTask { $0?.cancel() }
+                return (Data(#"{"text":"Устаревший ответ"}"#.utf8), response(request, 200))
+            }
+        }
+        do { _ = try await leftTranscription.value; preconditionFailure("Stale transcript was delivered") }
+        catch is CancellationError {}
     }
 
     private static func tryLoad(_ storage: CareStorage) -> CarePlan? {

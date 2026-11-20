@@ -47,15 +47,17 @@ enum CloudConversation {
 
     static let origin = "https://eto-ty-pilot-chat.sacredarbor.chatgpt.site"
     static let endpoint = URL(string: origin + "/v1/chat")!
-    private static let client: URLSession = {
+    private static let client = makeClient(requestTimeout: 35, resourceTimeout: 50)
+
+    static func makeClient(requestTimeout: TimeInterval, resourceTimeout: TimeInterval) -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.urlCache = nil
         configuration.httpShouldSetCookies = false
         configuration.urlCredentialStorage = nil
-        configuration.timeoutIntervalForRequest = 35
-        configuration.timeoutIntervalForResource = 50
+        configuration.timeoutIntervalForRequest = requestTimeout
+        configuration.timeoutIntervalForResource = resourceTimeout
         return URLSession(configuration: configuration, delegate: NoChatRedirects(), delegateQueue: nil)
-    }()
+    }
 
     static func answer(to text: String, previous: [Turn],
                        transport: ((URLRequest) async throws -> (Data, URLResponse))? = nil) async throws -> String {

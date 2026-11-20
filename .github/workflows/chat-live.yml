@@ -5,7 +5,30 @@ on:
     types: [labeled]
 permissions: {}
 jobs:
+  synthetic-voice:
+    if: github.event_name == 'workflow_dispatch' || (github.event.label.name == 'verify-pilot-chat' && github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Generate the fixed Russian speech sample without a microphone
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends espeak-ng ffmpeg
+          espeak-ng -v ru -s 145 -w "$RUNNER_TEMP/synthetic.wav" 'На столе лежит зелёное яблоко.'
+          ffmpeg -v error -nostdin -i "$RUNNER_TEMP/synthetic.wav" -map_metadata -1 -ac 1 -ar 16000 \
+            -c:a pcm_s16le "$RUNNER_TEMP/EtoTyLiveRussianVoice.wav"
+          ffmpeg -v error -nostdin -i "$RUNNER_TEMP/EtoTyLiveRussianVoice.wav" -map_metadata -1 \
+            -c:a aac -b:a 48k -movflags +faststart "$RUNNER_TEMP/EtoTyLiveRussianVoice.m4a"
+          ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,sample_rate,duration \
+            -of default=noprint_wrappers=1 "$RUNNER_TEMP/EtoTyLiveRussianVoice.m4a"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-ru-voice
+          path: ${{ runner.temp }}/EtoTyLiveRussianVoice.*
+          retention-days: 1
+
   hello:
+    needs: synthetic-voice
     if: github.event_name == 'workflow_dispatch' || (github.event.label.name == 'verify-pilot-chat' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -29,18 +52,47 @@ jobs:
           except HTTPError as error:
               print("Service HTTP status:", error.code, "content type:", error.headers.get_content_type(), "server:", error.headers.get("Server"))
               raise
+      - uses: actions/download-artifact@v4
+        with:
+          name: synthetic-ru-voice
+          path: ${{ runner.temp }}/etoty-live-audio
+      - name: Transcribe the synthetic AAC recording through the published service
+        shell: python
+        run: |
+          import json, os
+          from pathlib import Path
+          from urllib.error import HTTPError
+          from urllib.request import Request, urlopen
+          audio = (Path(os.environ["RUNNER_TEMP"]) / "etoty-live-audio/EtoTyLiveRussianVoice.m4a").read_bytes()
+          origin = "https://eto-ty-pilot-chat.sacredarbor.chatgpt.site"
+          request = Request(origin + "/v1/transcribe", data=audio,
+                            headers={"Content-Type": "audio/mp4", "Accept": "application/json",
+                                     "User-Agent": "EtoTy-iOS/1.0", "Origin": origin})
+          try:
+              with urlopen(request, timeout=55) as response:
+                  transcript = json.load(response)["text"].casefold()
+                  assert "стол" in transcript and "яблок" in transcript, "Expected words missing in synthetic transcription"
+                  print("Synthetic AAC transcribed successfully; HTTP", response.status, "bytes", len(audio))
+          except HTTPError as error:
+              print("Transcription service HTTP status:", error.code)
+              raise
 
   iphone-dialog:
+    needs: synthetic-voice
     if: github.event_name == 'workflow_dispatch' || (github.event.label.name == 'verify-pilot-chat' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: macos-15-intel
     permissions:
       contents: read
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Send two synthetic messages from the iPhone simulator and verify delivery after relaunch
+      - uses: actions/download-artifact@v4
+        with:
+          name: synthetic-ru-voice
+          path: ${{ runner.temp }}/etoty-live-audio
+      - name: Verify text chat, hands-free chat, and recorded dictation in the iPhone simulator
         run: sh setup-iphone.command --live-chat-smoke
       - name: Preserve the live simulator test result
         if: always()
