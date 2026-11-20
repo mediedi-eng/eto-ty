@@ -123,7 +123,7 @@ final class AvatarSurface: UIView, UIGestureRecognizerDelegate {
         renderedHeight = height
     }
 
-    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return true }
         let velocity = pan.velocity(in: self)
         return abs(velocity.x) > abs(velocity.y)
