@@ -27,12 +27,7 @@ struct BodyMapPanel<Feedback: View, Detail: View>: View {
                             withAnimation { scroll.scrollTo("map.detail", anchor: .top) }
                         }
                         .frame(maxWidth: .infinity)
-                        .frame(height: 350)
-                        .background(
-                            RadialGradient(colors: [Color(red: 0.19, green: 0.27, blue: 0.34),
-                                                    Color(red: 0.08, green: 0.12, blue: 0.16)],
-                                           center: .center, startRadius: 5, endRadius: 250)
-                        )
+                        .frame(height: 424)
                         .clipShape(RoundedRectangle(cornerRadius: 18))
                         Button { avatarReset += 1 } label: {
                             Image(systemName: "arrow.counterclockwise")
