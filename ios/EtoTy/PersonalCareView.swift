@@ -8,6 +8,9 @@ private enum CareTab { case chat, level, map }
 private enum CareSheet: Hashable, Identifiable {
     case schedule(Date?), documents(Region?), prevention, intent, brief(Region?), demo, cloud
     case sourcePDF(URL, String, Int), editSource(String), incoming
+    #if os(iOS)
+    case voiceConsent(ChatVoiceAction)
+    #endif
 
     var id: Self { self }
 }
@@ -27,6 +30,14 @@ struct PersonalCareView: View {
     @ViewState private var confirmingDeletion = false
     @FocusState private var composing: Bool
     @Environment(\.colorScheme) private var scheme
+    #if os(iOS)
+    @StateObject private var voice = VoiceConversation()
+    @AppStorage(SpeechPrivacyChoice.key) private var speechPrivacy = SpeechPrivacyChoice.ask
+    @AppStorage("personal.voice.talk.local.explained") private var localTalkExplained = false
+    @AppStorage("personal.voice.talk.online.explained") private var onlineTalkExplained = false
+    @ViewState private var voiceAfterDismiss: ChatVoiceAction?
+    @Environment(\.scenePhase) private var voiceScene
+    #endif
 
     private var accent: Color {
         scheme == .dark ? Color(red: 0.45, green: 0.85, blue: 0.71) : Color(red: 0.06, green: 0.40, blue: 0.32)
@@ -35,7 +46,12 @@ struct PersonalCareView: View {
     var body: some View {
         TabView(selection: $tab) {
             NavigationStack {
-                chat.navigationTitle("Диалог").toolbar { profileMenu }
+                chat.navigationTitle("Диалог").toolbar {
+                    #if os(iOS)
+                    ToolbarItem(placement: .topBarTrailing) { voiceCallButton }
+                    #endif
+                    ToolbarItem { profileMenu }
+                }
             }
             .tabItem { Label("Диалог", systemImage: "bubble.left.and.bubble.right") }.tag(CareTab.chat)
 
@@ -51,12 +67,37 @@ struct PersonalCareView: View {
         }
         .tint(accent)
         .onChange(of: tab) { _, newTab in
-            if newTab != .chat { writingVisitQuestion = false }
+            if newTab != .chat {
+                writingVisitQuestion = false
+                #if os(iOS)
+                stopVoice()
+                #endif
+            }
         }
+        #if os(iOS)
+        .onChange(of: voiceScene) { _, phase in
+            if phase == .background { stopVoice() }
+        }
+        .onChange(of: sheet) { _, value in
+            if value != nil { stopVoice() }
+        }
+        .onChange(of: writingVisitQuestion) { _, _ in stopVoice() }
+        .onChange(of: session.cloudEnabled) { _, _ in stopVoice() }
+        .onChange(of: confirmingDeletion) { _, value in
+            if value { stopVoice() }
+        }
+        .onDisappear { stopVoice() }
+        #endif
         .onAppear { session.refreshDocuments() }
         .sheet(item: $sheet, onDismiss: {
             session.refreshDocuments()
             presentIncomingWhenReady()
+            #if os(iOS)
+            if let action = voiceAfterDismiss {
+                voiceAfterDismiss = nil
+                if sheet == nil && tab == .chat && voiceScene == .active { beginVoice(action) }
+            }
+            #endif
         }, content: sheetContent)
         .quickLookPreview($photoOriginal)
         .onChange(of: incoming.offer?.id, initial: true) { _, _ in presentIncomingWhenReady() }
@@ -106,6 +147,17 @@ struct PersonalCareView: View {
 
     @ViewBuilder private func sheetContent(_ destination: CareSheet) -> some View {
         switch destination {
+        #if os(iOS)
+        case .voiceConsent(let action):
+            ChatVoiceConsent(action: action, online: session.cloudEnabled) { choice in
+                speechPrivacy = choice
+                if action == .talk {
+                    if session.cloudEnabled { onlineTalkExplained = true } else { localTalkExplained = true }
+                }
+                voiceAfterDismiss = action
+                sheet = nil
+            }
+        #endif
         case .incoming:
             CareIncomingDocumentView(incoming: incoming, storageAvailable: !session.storageUnavailable) { document in
                 sheet = nil
@@ -298,6 +350,12 @@ struct PersonalCareView: View {
                     .padding(.horizontal).padding(.top, 4)
                     .accessibilityIdentifier("care.chat.disclosure")
             }
+            #if os(iOS)
+            if voice.mode != .idle || voice.issue != nil {
+                ChatVoiceStatus(voice: voice) { sheet = .cloud }
+                    .padding(.top, 5)
+            }
+            #endif
             HStack(alignment: .bottom, spacing: 8) {
                 Button { composing = false; sheet = .documents(nil) } label: {
                     Image(systemName: "paperclip").frame(minWidth: 44, minHeight: 44)
@@ -307,12 +365,16 @@ struct PersonalCareView: View {
                     .focused($composing).lineLimit(1...5)
                     .padding(10).background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 14))
                     .accessibilityIdentifier("care.composer")
-                    .accessibilityHint("Можно использовать диктовку клавиатуры.")
+                    .disabled(voiceIsActive)
+                #if os(iOS)
+                voiceMicButton
+                #endif
                 Button(action: send) {
                     Image(systemName: writingVisitQuestion ? "checkmark.circle.fill" : "arrow.up.circle.fill")
                         .font(.title).frame(minWidth: 44, minHeight: 44)
                 }
                 .disabled((writingVisitQuestion ? questionDraft : draft).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(voiceIsActive)
                 .accessibilityLabel(writingVisitQuestion ? "Сохранить вопрос врачу" : "Отправить сообщение")
                 .accessibilityIdentifier("care.send")
             }
@@ -320,6 +382,73 @@ struct PersonalCareView: View {
             .padding(.horizontal, 10).padding(.vertical, 6)
         }
     }
+
+    private var voiceIsActive: Bool {
+        #if os(iOS)
+        return voice.mode != .idle
+        #else
+        return false
+        #endif
+    }
+
+    #if os(iOS)
+    private var voiceMicButton: some View {
+        Button {
+            if voice.mode == .dictation { voice.finishListening() } else { requestVoice(.dictate) }
+        } label: {
+            Image(systemName: voice.mode == .dictation ? "stop.circle.fill" : "mic.fill")
+                .font(.title3).frame(minWidth: 44, minHeight: 44)
+        }
+        .disabled(voice.mode == .conversation)
+        .accessibilityLabel(voice.mode == .dictation ? "Закончить диктовку" : "Продиктовать сообщение")
+        .accessibilityIdentifier("care.voice.mic")
+    }
+
+    private var voiceCallButton: some View {
+        Button {
+            if voice.mode == .conversation { stopVoice() } else { requestVoice(.talk) }
+        } label: {
+            Image(systemName: voice.mode == .conversation ? "phone.down.fill" : "waveform.circle")
+                .foregroundStyle(voice.mode == .conversation ? Color.red : accent)
+        }
+        .disabled(writingVisitQuestion || voice.mode == .dictation || session.storageUnavailable)
+        .accessibilityLabel(voice.mode == .conversation ? "Завершить голосовой разговор" : "Начать голосовой разговор")
+        .accessibilityIdentifier("care.voice.call")
+    }
+
+    private func requestVoice(_ action: ChatVoiceAction) {
+        composing = false
+        voice.clearIssue()
+        let explainTalk = action == .talk && !(session.cloudEnabled ? onlineTalkExplained : localTalkExplained)
+        if speechPrivacy == .ask || explainTalk {
+            sheet = .voiceConsent(action)
+        } else {
+            beginVoice(action)
+        }
+    }
+
+    private func beginVoice(_ action: ChatVoiceAction) {
+        guard !session.storageUnavailable else { return }
+        let allowNetwork = speechPrivacy == .appleIfNeeded && session.cloudEnabled
+        if action == .talk {
+            voice.startConversation(session: session, allowNetwork: allowNetwork)
+        } else {
+            let forQuestion = writingVisitQuestion
+            let prefix = forQuestion ? questionDraft : draft
+            // Recognition partials replace the same segment, keeping any earlier typed text.
+            voice.startDictation(allowNetwork: allowNetwork) { words in
+                let separator = !prefix.isEmpty && !words.isEmpty && prefix.last?.isWhitespace == false ? " " : ""
+                let text = prefix + separator + words
+                if forQuestion { questionDraft = text } else { draft = text }
+            }
+        }
+    }
+
+    private func stopVoice() {
+        voiceAfterDismiss = nil
+        voice.stop()
+    }
+    #endif
 
     private var showsWelcome: Bool {
         session.plan.topic == nil && session.plan.messages.count == 1 &&

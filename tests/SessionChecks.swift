@@ -26,6 +26,8 @@ enum SessionChecks {
         let docs = CareDocuments(directory: root.appendingPathComponent("files"))
         let delivery = SessionReminderProbe()
         try await checkCloudTransport()
+        try await VoiceConversationChecks.run(storage: CareStorage(directory: root.appendingPathComponent("voice")),
+                                              docs: docs, reminders: SessionReminderProbe())
         let chatStorage = CareStorage(directory: root.appendingPathComponent("chat"))
         let suite = "chat-checks." + UUID().uuidString
         let preferences = UserDefaults(suiteName: suite)!

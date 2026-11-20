@@ -40,11 +40,29 @@ final class LiveConversationUITests: XCTestCase {
         add(frame)
 
         app.terminate()
+        app.launchArguments.append("--eto-ty-ui-test-voice")
         app.launch()
         XCTAssertTrue(secondReply.waitForExistence(timeout: 12))
         XCTAssertTrue(replies.allElementsBoundByIndex.map { $0.label } == beforeRelaunch,
                       "Both delivered replies should survive relaunch in the same order.")
         XCTAssertFalse(app.descendants(matching: .any)["care.chat.pending"].exists)
+
+        // Feed a synthetic recognized phrase through the real hosted service using the voice UI.
+        app.buttons["care.voice.call"].tap()
+        let localSpeech = app.buttons["care.voice.consent.local"]
+        XCTAssertTrue(localSpeech.waitForExistence(timeout: 8))
+        localSpeech.tap()
+        XCTAssertTrue(app.staticTexts["Второй тестовый ход"].waitForExistence(timeout: 35),
+                      failureState(in: app))
+        XCTAssertEqual(replies.count, 3, "The voice turn should add one delivered service reply.")
+        let newest = replies.allElementsBoundByIndex.last
+        XCTAssertNotNil(newest)
+        XCTAssertTrue(newest?.isHittable == true)
+        let voiceFrame = XCTAttachment(screenshot: app.screenshot())
+        voiceFrame.name = "Live-dialog-after-voice-reply"
+        voiceFrame.lifetime = .keepAlways
+        add(voiceFrame)
+        app.buttons["care.voice.call"].tap()
     }
 
     @MainActor
