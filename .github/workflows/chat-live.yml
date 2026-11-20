@@ -7,14 +7,15 @@ permissions: {}
 jobs:
   synthetic-voice:
     if: github.event_name == 'workflow_dispatch' || (github.event.label.name == 'verify-pilot-chat' && github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Generate the fixed Russian speech sample without a microphone
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends espeak-ng ffmpeg
-          espeak-ng -v ru -s 145 -w "$RUNNER_TEMP/synthetic.wav" 'На столе лежит зелёное яблоко.'
+          sudo apt-get install -y -qq --no-install-recommends rhvoice rhvoice-russian ffmpeg
+          printf '%s\n' 'На столе лежит зелёное яблоко.' > "$RUNNER_TEMP/phrase.txt"
+          RHVoice-test -p Anna -i "$RUNNER_TEMP/phrase.txt" -o "$RUNNER_TEMP/synthetic.wav"
           ffmpeg -v error -nostdin -i "$RUNNER_TEMP/synthetic.wav" -map_metadata -1 -ac 1 -ar 16000 \
             -c:a pcm_s16le "$RUNNER_TEMP/EtoTyLiveRussianVoice.wav"
           ffmpeg -v error -nostdin -i "$RUNNER_TEMP/EtoTyLiveRussianVoice.wav" -map_metadata -1 \
@@ -78,7 +79,7 @@ jobs:
               raise
 
   iphone-dialog:
-    needs: synthetic-voice
+    needs: [synthetic-voice, hello]
     if: github.event_name == 'workflow_dispatch' || (github.event.label.name == 'verify-pilot-chat' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: macos-15-intel
     permissions:
