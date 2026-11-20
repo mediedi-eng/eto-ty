@@ -199,13 +199,28 @@ struct PersonalCareView: View {
                             welcomeCard
                         } else {
                             ForEach(session.plan.messages) { message in
-                                if session.generatingReplyID != message.id || !session.cloudEnabled {
-                                    CareBubble(message: message, accent: accent)
-                                        .id(message.id)
-                                }
-                                if message.id == session.plan.messages.last?.id, message.kind != nil {
-                                    conversationActions(for: message)
-                                }
+                                VStack(alignment: .leading, spacing: 8) {
+                                    if session.pendingCloudIDs.contains(message.id) {
+                                        HStack {
+                                            ProgressView()
+                                            Text("«Это ты» отвечает…").font(.footnote)
+                                        }
+                                        .accessibilityElement(children: .combine)
+                                        .accessibilityIdentifier("care.chat.pending")
+                                    } else {
+                                        CareBubble(message: message, accent: accent)
+                                        if let issue = session.cloudIssues[message.id] {
+                                            Text(issue.localizedDescription).font(.footnote).foregroundStyle(.secondary)
+                                            if issue != .tooLong {
+                                                Button("Повторить отправку") { session.retryCloudReply(message.id) }
+                                                    .buttonStyle(.bordered)
+                                            }
+                                        }
+                                        if message.id == session.plan.messages.last?.id, message.kind != nil {
+                                            conversationActions(for: message)
+                                        }
+                                    }
+                                }.id(message.id)
                             }
                         }
                         if !showsWelcome && !session.plan.isAskingForUrgentHelp && !session.storageUnavailable {
@@ -256,7 +271,10 @@ struct PersonalCareView: View {
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .onAppear { scrollToReply(proxy) }
-                .onChange(of: session.plan.messages.last?.id) { _, _ in
+                .onChange(of: session.plan.messages.last) { _, _ in
+                    scrollToReply(proxy)
+                }
+                .onChange(of: session.plan.messages.last.map { session.pendingCloudIDs.contains($0.id) }) { _, _ in
                     scrollToReply(proxy)
                 }
                 .onChange(of: session.documentSuggestion?.id) { _, newID in
@@ -320,11 +338,8 @@ struct PersonalCareView: View {
         if session.generatingReplyID == reply.id {
             HStack {
                 ProgressView()
-                Text(session.cloudEnabled ? "«Это ты» отвечает…" : "Готовлю ответ на iPhone…").font(.footnote)
-            }.id(reply.id)
-        }
-        if let issue = session.cloudIssue {
-            Text(issue).font(.footnote).foregroundStyle(.secondary)
+                Text("Готовлю ответ на iPhone…").font(.footnote)
+            }
         }
         if session.generatingReplyID != reply.id, reply.kind != .greeting && reply.kind != .help,
            let user = session.plan.messages.dropLast().last, user.fromUser {

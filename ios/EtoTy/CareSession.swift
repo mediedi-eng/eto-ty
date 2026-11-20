@@ -24,10 +24,21 @@ final class CareSession: ObservableObject {
     @Published private(set) var archiveAvailable = false
     @Published private(set) var generatingReplyID: UUID?
     @Published private(set) var cloudEnabled: Bool
-    @Published private(set) var cloudIssue: String?
+    @Published private(set) var pendingCloudIDs = Set<UUID>()
+    @Published private(set) var cloudIssues: [UUID: CloudChatError] = [:]
     private static let cloudSetting = "personal-chat.service.enabled.v1"
     private let preferences: UserDefaults
-    private var cloudTurns: [CloudConversation.Turn] = []
+    private struct CloudRequest {
+        let replyID: UUID
+        let input: String
+        let attempt = UUID()
+    }
+    private var queue: [CloudRequest] = []
+    private var activeAttempt: UUID?
+    private var serviceTask: Task<Void, Never>?
+    private var deadlines: [UUID: Task<Void, Never>] = [:]
+    private var completedInSession = Set<UUID>()
+    private let replyDeadline: UInt64
 
     var documentSuggestion: CareDocumentFollowUp? {
         guard archiveAvailable else { return nil }
@@ -61,6 +72,7 @@ final class CareSession: ObservableObject {
          now: @escaping () -> Date = Date.init, liveClock: Bool = true,
          generateReply: @escaping ([CareMessage]) async -> String? = CareConversationModel.answer,
          preferences: UserDefaults = .standard,
+         replyDeadline: UInt64 = 25_000_000_000,
          cloudReply: @escaping (String, [CloudConversation.Turn]) async throws -> String = { input, history in
              try await CloudConversation.answer(to: input, previous: history)
          }) {
@@ -74,6 +86,7 @@ final class CareSession: ObservableObject {
         self.cloudEnabled = (preferences.object(forKey: Self.cloudSetting) as? Bool)
             ?? (preferences.object(forKey: "personal-chat.openrouter.enabled.v1") as? Bool)
             ?? true
+        self.replyDeadline = replyDeadline
         self.cloudReply = cloudReply
         restore()
         reminders.onEvent = { [weak self] event in
@@ -84,6 +97,8 @@ final class CareSession: ObservableObject {
     }
 
     deinit {
+        serviceTask?.cancel()
+        for timer in deadlines.values { timer.cancel() }
         replyTask?.cancel()
         clock?.cancel()
         reminderTask?.cancel()
@@ -95,10 +110,10 @@ final class CareSession: ObservableObject {
               apply({ $0.receive(text, now: instant, conversation: conversation) }) else { return }
         replyTask?.cancel()
         generatingReplyID = nil
-        cloudIssue = nil
+        if plan.isAskingForUrgentHelp { cancelCloudRequests() }
         if let latest = plan.messages.last, let kind = latest.kind {
             if conversation && cloudEnabled {
-                startCloudReply(to: text, replyID: latest.id)
+                enqueueCloudReply(to: text, replyID: latest.id)
                 return
             }
             if kind != .greeting && kind != .help {
@@ -135,33 +150,89 @@ final class CareSession: ObservableObject {
     private func resetCloudConversation() {
         replyTask?.cancel()
         generatingReplyID = nil
-        cloudTurns.removeAll()
-        cloudIssue = nil
+        cancelCloudRequests()
+        completedInSession.removeAll()
+        cloudIssues.removeAll()
     }
 
-    private func startCloudReply(to input: String, replyID: UUID) {
+    private func cancelCloudRequests() {
+        serviceTask?.cancel()
+        serviceTask = nil
+        activeAttempt = nil
+        for timer in deadlines.values { timer.cancel() }
+        deadlines.removeAll()
+        queue.removeAll()
+        pendingCloudIDs.removeAll()
+    }
+
+    func retryCloudReply(_ replyID: UUID) {
+        guard cloudEnabled, cloudIssues[replyID] != nil,
+              let i = plan.messages.firstIndex(where: { $0.id == replyID }), i > 0,
+              plan.messages[i - 1].fromUser else { return }
+        enqueueCloudReply(to: plan.messages[i - 1].text, replyID: replyID)
+    }
+
+    private func enqueueCloudReply(to input: String, replyID: UUID) {
+        guard !pendingCloudIDs.contains(replyID) else { return }
         guard input.utf16.count <= 4000 else {
-            cloudIssue = CloudChatError.tooLong.localizedDescription
+            cloudIssues[replyID] = .tooLong
             return
         }
-        generatingReplyID = replyID
-        let previous = cloudTurns
-        replyTask = Task { [weak self, cloudReply] in
+        cloudIssues[replyID] = nil
+        let request = CloudRequest(replyID: replyID, input: input)
+        queue.append(request)
+        pendingCloudIDs.insert(replyID)
+        // Bound the time shown on screen, including time spent waiting for the previous turn.
+        deadlines[request.attempt] = Task { [weak self, replyDeadline] in
+            do { try await Task.sleep(nanoseconds: replyDeadline) } catch { return }
+            self?.finishCloudReply(request, result: .failure(.timedOut))
+        }
+        runNextCloudReply()
+    }
+
+    private func runNextCloudReply() {
+        guard activeAttempt == nil, let request = queue.first else { return }
+        activeAttempt = request.attempt
+        // Only earlier turns completed in this cloud session may be sent as context.
+        var history: [CloudConversation.Turn] = []
+        let messages = plan.messages.prefix { $0.id != request.replyID }
+        for i in messages.indices.reversed() where i > 0 && completedInSession.contains(messages[i].id) {
+            history.insert(contentsOf: [.init(role: "user", content: messages[i - 1].text),
+                                        .init(role: "assistant", content: messages[i].text)], at: 0)
+            if history.count == 6 { break }
+        }
+        serviceTask = Task { [weak self, cloudReply] in
             do {
                 try Task.checkCancellation()
-                let text = try await cloudReply(input, previous)
-                guard let self, !Task.isCancelled, self.generatingReplyID == replyID else { return }
-                self.generatingReplyID = nil
-                guard self.plan.messages.last?.id == replyID,
-                      self.apply({ $0.replaceConversationReply(id: replyID, with: text, kind: .service) }) else { return }
-                self.cloudTurns = Array((previous + [.init(role: "user", content: input),
-                                                     .init(role: "assistant", content: text)]).suffix(6))
+                let answer = try await cloudReply(request.input, history)
+                self?.finishCloudReply(request, result: .success(answer))
             } catch {
-                guard let self, !Task.isCancelled, self.generatingReplyID == replyID else { return }
-                self.generatingReplyID = nil
-                self.cloudIssue = (error as? CloudChatError ?? .connection).localizedDescription
+                self?.finishCloudReply(request, result: .failure(error as? CloudChatError ?? .connection))
             }
         }
+    }
+
+    private func finishCloudReply(_ request: CloudRequest, result: Result<String, CloudChatError>) {
+        guard let i = queue.firstIndex(where: { $0.attempt == request.attempt }) else { return }
+        queue.remove(at: i)
+        deadlines.removeValue(forKey: request.attempt)?.cancel()
+        if activeAttempt == request.attempt {
+            serviceTask?.cancel()
+            serviceTask = nil
+            activeAttempt = nil
+        }
+        switch result {
+        case .success(let text):
+            if apply({ $0.replaceConversationReply(id: request.replyID, with: text, kind: .service) }) {
+                completedInSession.insert(request.replyID)
+            } else {
+                cloudIssues[request.replyID] = .saveFailed
+            }
+        case .failure(let error):
+            cloudIssues[request.replyID] = error
+        }
+        pendingCloudIDs.remove(request.replyID)
+        runNextCloudReply()
     }
 
     @discardableResult
