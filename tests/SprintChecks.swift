@@ -17,8 +17,9 @@ struct SprintChecks {
         try ScannerChecks.run()
         try await IncomingDocumentChecks.run()
         try PageReaderChecks.run()
+        try SourceCitationJourneyChecks.run()
         try PersonalBriefChecks.run()
         try await SessionChecks.run()
-        print("Verified personal conversations, local storage, document intake, page reading, visit summaries and scheduled follow-up.")
+        print("Verified personal conversations, document citations, visit summaries and scheduled follow-up.")
     }
 }
