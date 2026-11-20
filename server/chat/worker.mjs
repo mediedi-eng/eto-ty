@@ -145,7 +145,13 @@ export default {
                 signal: AbortSignal.timeout(20_000),
             });
             if (!upstream.ok) {
-                await upstream.body?.cancel();
+                // Log only the HTTP status and a known machine code. Provider messages
+                // can contain submitted text or credential fragments.
+                const detail = await upstream.json().catch(() => null);
+                const known = ["invalid_api_key", "insufficient_quota", "model_not_found",
+                    "rate_limit_exceeded", "unsupported_country_region_territory"];
+                const code = detail?.error?.code;
+                console.warn("chat_provider_failure", upstream.status, known.includes(code) ? code : "other");
                 return json({error: "provider_unavailable"}, 503);
             }
             const reply = (await upstream.json()).choices?.[0]?.message?.content;

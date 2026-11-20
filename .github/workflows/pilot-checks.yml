@@ -28,7 +28,7 @@ jobs:
                          for item in test["attachments"]]
           frame = next(item for item in attachments if "Founder-preview-dialog" in item.get("suggestedHumanReadableName", ""))
           shutil.copyfile(folder / frame["exportedFileName"], "local-data/first-dialog.png")
-          image = next(item for item in attachments if "Карта тела — исходный ракурс" in item.get("suggestedHumanReadableName", ""))
+          image = next(item for item in attachments if "Founder-preview-avatar" in item.get("suggestedHumanReadableName", ""))
           shutil.copyfile(folder / image["exportedFileName"], "local-data/body-avatar.png")
           PY
       - uses: actions/upload-artifact@v4

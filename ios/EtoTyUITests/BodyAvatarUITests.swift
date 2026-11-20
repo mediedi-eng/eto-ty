@@ -16,7 +16,7 @@ final class BodyAvatarUITests: XCTestCase {
         let initial = "Сердце, поворот 0°, масштаб 100%"
         waitForValue(initial, of: avatar)
         let front = XCTAttachment(screenshot: app.screenshot())
-        front.name = "Карта тела — исходный ракурс"
+        front.name = "Founder-preview-avatar"
         front.lifetime = .keepAlways
         add(front)
 

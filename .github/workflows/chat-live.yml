@@ -2,11 +2,11 @@ name: Live pilot chat
 on:
   workflow_dispatch:
   pull_request:
-    types: [labeled, synchronize]
+    types: [labeled]
 permissions: {}
 jobs:
   hello:
-    if: github.event_name == 'workflow_dispatch' || ((github.event.label.name == 'verify-pilot-chat' || contains(github.event.pull_request.labels.*.name, 'verify-pilot-chat')) && github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.event_name == 'workflow_dispatch' || (github.event.label.name == 'verify-pilot-chat' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
