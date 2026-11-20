@@ -44,7 +44,7 @@ struct CareWeeklyContact: Codable, Equatable {
 }
 
 enum CareReplyKind: String, Codable {
-    case greeting, help, sleep, clarify, followUp, draft, model
+    case greeting, help, sleep, clarify, followUp, draft, model, cloud
 }
 
 struct CareMessage: Identifiable, Codable, Equatable {
@@ -381,9 +381,9 @@ struct CarePlan: Codable, Equatable {
         return answer("Что в этом для тебя самое важное сейчас? Например, понять, что изменилось, или подготовиться к разговору с врачом?", .clarify)
     }
 
-    mutating func replaceConversationReply(id: UUID, with text: String) {
+    mutating func replaceConversationReply(id: UUID, with text: String, kind: CareReplyKind = .model) {
         guard let current = messages.last, current.id == id, current.kind != nil else { return }
-        messages[messages.count - 1] = CareMessage(text, at: current.createdAt, kind: .model, id: id)
+        messages[messages.count - 1] = CareMessage(text, at: current.createdAt, kind: kind, id: id)
     }
 
     mutating func makeConversationTopic(replyID: UUID, now: Date) {

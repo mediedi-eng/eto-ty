@@ -23,6 +23,10 @@ final class CareSession: ObservableObject {
     @Published private(set) var archivedDocuments: [CareDocument] = []
     @Published private(set) var archiveAvailable = false
     @Published private(set) var generatingReplyID: UUID?
+    @Published private(set) var cloudEnabled = false
+    @Published private(set) var cloudIssue: String?
+    private static let cloudSetting = "personal-chat.openrouter.enabled.v1"
+    private var cloudTurns: [CloudConversation.Turn] = []
 
     var documentSuggestion: CareDocumentFollowUp? {
         guard archiveAvailable else { return nil }
@@ -40,6 +44,7 @@ final class CareSession: ObservableObject {
     private let now: () -> Date
     private let liveClock: Bool
     private let generateReply: ([CareMessage]) async -> String?
+    private let cloudReply: (String, [CloudConversation.Turn]) async throws -> String
     private var replyTask: Task<Void, Never>?
     private var clock: Task<Void, Never>?
     private var reminderTask: Task<Void, Never>?
@@ -47,18 +52,25 @@ final class CareSession: ObservableObject {
     private var permissionDate: Date?
 
     convenience init() {
-        self.init(storage: CareStorage(), documents: CareDocuments(), reminders: CareReminders.shared)
+        self.init(storage: CareStorage(), documents: CareDocuments(), reminders: CareReminders.shared,
+                  cloudEnabled: UserDefaults.standard.bool(forKey: Self.cloudSetting))
     }
 
     init(storage: CareStorage, documents: CareDocuments, reminders: CareReminderDelivery,
          now: @escaping () -> Date = Date.init, liveClock: Bool = true,
-         generateReply: @escaping ([CareMessage]) async -> String? = CareConversationModel.answer) {
+         generateReply: @escaping ([CareMessage]) async -> String? = CareConversationModel.answer,
+         cloudEnabled: Bool = false,
+         cloudReply: @escaping (String, [CloudConversation.Turn]) async throws -> String = { input, history in
+             try await CloudConversation.answer(to: input, previous: history, key: CloudChatKey.read())
+         }) {
         self.storage = storage
         self.documents = documents
         self.reminders = reminders
         self.now = now
         self.liveClock = liveClock
         self.generateReply = generateReply
+        self.cloudEnabled = cloudEnabled
+        self.cloudReply = cloudReply
         restore()
         reminders.onEvent = { [weak self] event in
             guard let self else { return }
@@ -79,7 +91,12 @@ final class CareSession: ObservableObject {
               apply({ $0.receive(text, now: instant, conversation: conversation) }) else { return }
         replyTask?.cancel()
         generatingReplyID = nil
+        cloudIssue = nil
         if let latest = plan.messages.last, let kind = latest.kind {
+            if conversation && cloudEnabled {
+                startCloudReply(to: text, replyID: latest.id)
+                return
+            }
             if kind != .greeting && kind != .help {
                 let history = Array(plan.messages.dropLast().suffix(7))
                 generatingReplyID = latest.id
@@ -103,6 +120,57 @@ final class CareSession: ObservableObject {
 
     func makeConversationTopic(replyID: UUID) {
         apply { $0.makeConversationTopic(replyID: replyID, now: self.now()) }
+    }
+
+    func connectCloud(key input: String) throws {
+        let key = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard key.hasPrefix("sk-or-"), key.utf8.count <= 512,
+              key.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) else {
+            throw CloudChatError.key
+        }
+        try CloudChatKey.store(key)
+        resetCloudConversation()
+        UserDefaults.standard.set(true, forKey: Self.cloudSetting)
+        cloudEnabled = true
+    }
+
+    func disconnectCloud() throws {
+        resetCloudConversation()
+        UserDefaults.standard.removeObject(forKey: Self.cloudSetting)
+        cloudEnabled = false
+        try CloudChatKey.remove()
+    }
+
+    private func resetCloudConversation() {
+        replyTask?.cancel()
+        generatingReplyID = nil
+        cloudTurns.removeAll()
+        cloudIssue = nil
+    }
+
+    private func startCloudReply(to input: String, replyID: UUID) {
+        guard input.count <= 4000 else {
+            cloudIssue = "Для облачного ответа сократи сообщение до 4000 символов."
+            return
+        }
+        generatingReplyID = replyID
+        let previous = cloudTurns
+        replyTask = Task { [weak self, cloudReply] in
+            do {
+                try Task.checkCancellation()
+                let text = try await cloudReply(input, previous)
+                guard let self, !Task.isCancelled, self.generatingReplyID == replyID else { return }
+                self.generatingReplyID = nil
+                guard self.plan.messages.last?.id == replyID,
+                      self.apply({ $0.replaceConversationReply(id: replyID, with: text, kind: .cloud) }) else { return }
+                self.cloudTurns = Array((previous + [.init(role: "user", content: input),
+                                                     .init(role: "assistant", content: text)]).suffix(6))
+            } catch {
+                guard let self, !Task.isCancelled, self.generatingReplyID == replyID else { return }
+                self.generatingReplyID = nil
+                self.cloudIssue = (error as? CloudChatError ?? .connection).localizedDescription
+            }
+        }
     }
 
     @discardableResult
@@ -222,6 +290,7 @@ final class CareSession: ObservableObject {
         generatingReplyID = nil
         // Removing attachments first also makes a partially completed deletion safe to retry.
         do {
+            if cloudEnabled { try disconnectCloud() }
             try documents.deleteAll()
             try storage.delete()
         } catch {
