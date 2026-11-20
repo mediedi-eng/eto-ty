@@ -175,10 +175,26 @@ import UIKit
 
 @MainActor
 final class CareNotificationBootstrap: NSObject, UIApplicationDelegate {
+    static let externalDocumentDidOpen = Notification.Name("CareExternalDocumentDidOpen")
+    private static var pendingExternalDocuments = [URL]()
+
     func application(_ application: UIApplication,
                      willFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         _ = CareReminders.shared
         return true
+    }
+
+    func application(_ application: UIApplication, open url: URL,
+                     options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+        guard url.isFileURL else { return false }
+        Self.pendingExternalDocuments.append(url)
+        NotificationCenter.default.post(name: Self.externalDocumentDidOpen, object: nil)
+        return true
+    }
+
+    static func takeExternalDocuments() -> [URL] {
+        defer { pendingExternalDocuments.removeAll() }
+        return pendingExternalDocuments
     }
 }
 #endif

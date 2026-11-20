@@ -18,13 +18,52 @@ struct EtoTyApp: App {
                 #if os(iOS)
                 .background(SnapshotShield().frame(width: 0, height: 0))
                 .onOpenURL { url in incoming.receive(url) }
+                .onReceive(NotificationCenter.default.publisher(
+                    for: CareNotificationBootstrap.externalDocumentDidOpen
+                )) { _ in
+                    receivePendingExternalDocuments()
+                }
                 #endif
-                .onAppear { session.refresh() }
+                .onAppear {
+                    #if DEBUG && os(iOS)
+                    seedUITestDocumentIfRequested()
+                    #endif
+                    session.refresh()
+                    #if os(iOS)
+                    receivePendingExternalDocuments()
+                    #endif
+                }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active { session.refresh() }
                 }
         }
     }
+
+    #if os(iOS)
+    private func receivePendingExternalDocuments() {
+        for url in CareNotificationBootstrap.takeExternalDocuments() {
+            incoming.receive(url)
+        }
+    }
+
+    #if DEBUG
+    private func seedUITestDocumentIfRequested() {
+        let process = ProcessInfo.processInfo
+        guard process.environment["ETO_TY_UI_TEST_SEED_DOCUMENT"] == "1" ||
+                process.arguments.contains("--eto-ty-ui-test-seed-document") else { return }
+        let store = CareDocuments()
+        guard (try? store.list().contains { $0.name == "Example-report.png" }) != true else { return }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 32, height: 32), format: format)
+        let data = renderer.pngData { context in
+            context.cgContext.setFillColor(UIColor.systemTeal.cgColor)
+            context.cgContext.fill(CGRect(x: 0, y: 0, width: 32, height: 32))
+        }
+        _ = try? store.add(data, name: "Example-report.png")
+    }
+    #endif
+    #endif
 }
 
 
