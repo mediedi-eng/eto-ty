@@ -18,6 +18,9 @@ struct PersonalCareView: View {
     @ViewState private var tab = CareTab.chat
     @ViewState private var sheet: CareSheet?
     @ViewState private var draft = ""
+    @ViewState private var writingVisitQuestion = false
+    @ViewState private var questionDraft = ""
+    @ViewState private var showSavedVisitQuestion = false
     @ViewState private var region = Region.heart
     @ViewState private var photoOriginal: URL?
     @ViewState private var sourceIssue: String?
@@ -47,6 +50,9 @@ struct PersonalCareView: View {
             .tabItem { Label("Карта тела", systemImage: "figure.stand") }.tag(CareTab.map)
         }
         .tint(accent)
+        .onChange(of: tab) { _, newTab in
+            if newTab != .chat { writingVisitQuestion = false }
+        }
         .onAppear { session.refreshDocuments() }
         .sheet(item: $sheet, onDismiss: {
             session.refreshDocuments()
@@ -69,6 +75,9 @@ struct PersonalCareView: View {
         }
         .onChange(of: session.plan.messages.first?.id) { _, _ in
             draft = ""
+            questionDraft = ""
+            showSavedVisitQuestion = false
+            writingVisitQuestion = false
             tab = .chat
             sourceIssue = nil
             photoOriginal = nil
@@ -81,6 +90,7 @@ struct PersonalCareView: View {
         }
         .onChange(of: session.openChatToken) { _, _ in
             confirmingDeletion = false
+            writingVisitQuestion = false
             photoOriginal = nil
             if sheet != .incoming { sheet = nil }
             composing = false
@@ -151,6 +161,8 @@ struct PersonalCareView: View {
 
     private var profileMenu: some View {
         Menu {
+            Button { startVisitQuestion() } label: { Label("Записать вопрос врачу", systemImage: "square.and.pencil") }
+                .disabled(session.storageUnavailable || session.plan.isAskingForUrgentHelp)
             Button { openBrief() } label: { Label("Сводка к приёму", systemImage: "doc.richtext") }
                 .disabled(session.storageUnavailable)
             Button { sheet = .intent } label: { Label("Подобрать раздел по фразе", systemImage: "text.magnifyingglass") }
@@ -176,14 +188,30 @@ struct PersonalCareView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 16) {
-                        ForEach(session.plan.messages) { message in
-                            CareBubble(message: message, accent: accent)
-                                .id(message.id)
+                        if showsWelcome {
+                            welcomeCard
+                        } else {
+                            ForEach(session.plan.messages) { message in
+                                CareBubble(message: message, accent: accent)
+                                    .id(message.id)
+                            }
                         }
-                        if !session.plan.isAskingForUrgentHelp && !session.storageUnavailable {
+                        if !showsWelcome && !session.plan.isAskingForUrgentHelp && !session.storageUnavailable {
                             Button("Что проверить?") { sheet = .prevention }
                                 .buttonStyle(.bordered)
                                 .accessibilityIdentifier("care.preparation.open")
+                        }
+                        if let question = session.plan.visitQuestions.last, !session.plan.isAskingForUrgentHelp,
+                           session.plan.topic == nil || showSavedVisitQuestion {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Label("Вопрос к приёму сохранён", systemImage: "checkmark.circle")
+                                    .font(.subheadline.weight(.semibold)).foregroundStyle(accent)
+                                Text(question.text).textSelection(.enabled)
+                                    .accessibilityIdentifier("care.visit.latest")
+                                Button("Открыть сводку к приёму") { openBrief() }
+                                    .disabled(session.storageUnavailable)
+                            }.padding().frame(maxWidth: .infinity, alignment: .leading)
+                                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
                         }
                         if session.plan.topic != nil && !session.plan.isAskingForUrgentHelp {
                             agenda
@@ -223,27 +251,70 @@ struct PersonalCareView: View {
                     if newID != nil { proxy.scrollTo("latest", anchor: .bottom) }
                 }
                 .onChange(of: session.openChatToken) { _, _ in proxy.scrollTo("latest", anchor: .bottom) }
+                .onChange(of: session.plan.visitQuestions.last?.id) { _, _ in proxy.scrollTo("latest", anchor: .bottom) }
             }
             Divider()
+            if writingVisitQuestion {
+                HStack {
+                    Label("Вопрос для врача", systemImage: "square.and.pencil").font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Button("В диалог") { writingVisitQuestion = false; composing = false }
+                }.padding(.horizontal).padding(.top, 6)
+            }
             HStack(alignment: .bottom, spacing: 8) {
                 Button { composing = false; sheet = .documents(nil) } label: {
                     Image(systemName: "paperclip").frame(minWidth: 44, minHeight: 44)
                 }.accessibilityLabel("Открыть и добавить документы")
-                TextField("Сообщение", text: $draft, axis: .vertical)
+                TextField(writingVisitQuestion ? "Что хочешь спросить у врача?" : "Сообщение",
+                          text: writingVisitQuestion ? $questionDraft : $draft, axis: .vertical)
                     .focused($composing).lineLimit(1...5)
                     .padding(10).background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 14))
                     .accessibilityIdentifier("care.composer")
                     .accessibilityHint("Можно использовать диктовку клавиатуры.")
                 Button(action: send) {
-                    Image(systemName: "arrow.up.circle.fill").font(.title).frame(minWidth: 44, minHeight: 44)
+                    Image(systemName: writingVisitQuestion ? "checkmark.circle.fill" : "arrow.up.circle.fill")
+                        .font(.title).frame(minWidth: 44, minHeight: 44)
                 }
-                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .accessibilityLabel("Отправить сообщение")
+                .disabled((writingVisitQuestion ? questionDraft : draft).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityLabel(writingVisitQuestion ? "Сохранить вопрос врачу" : "Отправить сообщение")
                 .accessibilityIdentifier("care.send")
             }
             .disabled(session.storageUnavailable)
             .padding(.horizontal, 10).padding(.vertical, 6)
         }
+    }
+
+    private var showsWelcome: Bool {
+        session.plan.topic == nil && session.plan.messages.count == 1 &&
+            !session.plan.isAskingForUrgentHelp && !session.storageUnavailable
+    }
+
+    private var welcomeCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Image(systemName: "bubble.left.and.text.bubble.right.fill")
+                .font(.title2).foregroundStyle(accent).accessibilityHidden(true)
+            Text("С чего начнём?").font(.title.bold())
+            Text("Напиши, что тебя волнует. Можно начать с вопроса к приёму или приложить документ через скрепку.")
+                .foregroundStyle(.secondary)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) { welcomeActions }
+                VStack(alignment: .leading, spacing: 8) { welcomeActions }
+            }
+        }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
+            .background(accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    @ViewBuilder private var welcomeActions: some View {
+        Button("Что проверить?") { composing = false; sheet = .prevention }
+            .buttonStyle(.borderedProminent).accessibilityIdentifier("care.preparation.open")
+        Button("Записать вопрос врачу") { startVisitQuestion() }
+            .buttonStyle(.bordered).accessibilityIdentifier("care.visit.start")
+    }
+
+    private func startVisitQuestion() {
+        tab = .chat
+        writingVisitQuestion = true
+        composing = true
     }
 
     @ViewBuilder private var sessionFeedback: some View {
@@ -267,6 +338,11 @@ struct PersonalCareView: View {
 
     private var agenda: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if tab == .chat, let topic = session.plan.topic {
+                Text(session.plan.isClosed ? "Завершённое дело" : "Твоё дело")
+                    .font(.caption.weight(.semibold)).foregroundStyle(accent)
+                Text(topic).font(.headline).textSelection(.enabled)
+            }
             if let source = session.activeDocumentSource {
                 Text("Документ по этой теме").font(.subheadline.weight(.semibold))
                 sourceButton(id: source.id, name: source.name, page: source.evidence?.page)
@@ -436,10 +512,20 @@ struct PersonalCareView: View {
     }
 
     private func send() {
+        if writingVisitQuestion {
+            if session.addVisitQuestion(questionDraft) {
+                questionDraft = ""
+                showSavedVisitQuestion = true
+                writingVisitQuestion = false
+                composing = false
+            }
+            return
+        }
         let before = session.plan.messages.last?.id
         session.send(draft)
         if session.plan.messages.last?.id != before {
             draft = ""
+            showSavedVisitQuestion = false
             composing = false
         }
     }

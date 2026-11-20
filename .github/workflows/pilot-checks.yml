@@ -16,6 +16,33 @@ jobs:
       - run: make check
       - run: make ios-build
       - run: make ios-smoke
+      - name: Export the empty-profile screen from the simulator test
+        run: |
+          bundle=$(find local-data/ios-smoke -name Journey.xcresult -print -quit)
+          xcrun xcresulttool export attachments --path "$bundle" --output-path "$RUNNER_TEMP/screens"
+          python3 - <<'PY'
+          import json, os, shutil
+          from pathlib import Path
+          folder = Path(os.environ["RUNNER_TEMP"]) / "screens"
+          attachments = [item for test in json.loads((folder / "manifest.json").read_text())
+                         for item in test["attachments"]]
+          frame = next(item for item in attachments if "Founder-preview-dialog" in item.get("suggestedHumanReadableName", ""))
+          shutil.copyfile(folder / frame["exportedFileName"], "local-data/first-dialog.png")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: first-dialog-iphone
+          path: local-data/first-dialog.png
+          retention-days: 7
+  device-build:
+    runs-on: macos-15-intel
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Compile for a physical iPhone without a personal certificate
+        run: xcodebuild -project ios/EtoTy.xcodeproj -scheme EtoTy -configuration Debug -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
   evidence:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
