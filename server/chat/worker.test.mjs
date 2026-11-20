@@ -222,7 +222,8 @@ test("a real AAC M4A is reserved separately and sent as a named multipart file",
         assert.deepEqual(options.headers, {Authorization: "Bearer " + fixtureKey});
         assert.equal(options.redirect, "manual");
         assert.equal(options.body.get("model"), "gpt-transcribe");
-        assert.deepEqual([...options.body.keys()].sort(), ["file", "model"]);
+        assert.deepEqual(options.body.getAll("languages[]"), ["ru"]);
+        assert.deepEqual([...options.body.keys()].sort(), ["file", "languages[]", "model"]);
         const file = options.body.get("file");
         assert.equal(file.name, "voice.m4a");
         assert.equal(file.type, "audio/mp4");

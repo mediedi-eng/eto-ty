@@ -71,7 +71,7 @@ jobs:
           try:
               with urlopen(request, timeout=55) as response:
                   transcript = json.load(response)["text"].casefold()
-                  assert "стол" in transcript and "яблок" in transcript, "Expected words missing in synthetic transcription"
+                  assert "стол" in transcript and "яблок" in transcript, f"Unexpected transcript for fixed synthetic sample: {transcript[:180]!r}"
                   print("Synthetic AAC transcribed successfully; HTTP", response.status, "bytes", len(audio))
           except HTTPError as error:
               print("Transcription service HTTP status:", error.code)

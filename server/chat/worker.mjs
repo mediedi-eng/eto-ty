@@ -248,6 +248,7 @@ async function transcribe(request, env) {
 
     const form = new FormData();
     form.append("model", "gpt-transcribe");
+    form.append("languages[]", "ru");
     form.append("file", new Blob([bytes], {type: "audio/mp4"}), "voice.m4a");
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 45_000);
