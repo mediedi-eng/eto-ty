@@ -51,7 +51,7 @@ test("native chat contract, lazy migration, data minimization and pinned provide
         assert.equal(spent(sqlite), 1, "reserve before sending content");
         assert.equal(url, "https://api.openai.com/v1/chat/completions");
         assert.deepEqual(options.headers, {Authorization: "Bearer " + fixtureKey, "Content-Type": "application/json"});
-        assert.equal(options.redirect, "error");
+        assert.equal(options.redirect, "manual");
         assert.ok(options.signal instanceof AbortSignal);
         const body = JSON.parse(options.body);
         assert.deepEqual(Object.keys(body).sort(), ["max_completion_tokens", "messages", "model", "store"]);
@@ -161,15 +161,17 @@ test("upstream failures spend once and keep the provider's diagnostics private",
 
 test("fetch deadline aborts a stalled provider and keeps the reservation", async t => {
     const {env, sqlite} = database(t);
-    const aborted = new AbortController();
-    const timeout = t.mock.method(AbortSignal, "timeout", () => aborted.signal);
+    let trigger;
+    const timeout = t.mock.method(globalThis, "setTimeout", callback => { trigger = callback; return 1; });
+    const clear = t.mock.method(globalThis, "clearTimeout", () => {});
     t.mock.method(globalThis, "fetch", async (_url, {signal}) => {
         const pending = new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason)));
-        aborted.abort();
+        trigger();
         return pending;
     });
     assert.equal((await worker.fetch(request(), env)).status, 503);
-    assert.equal(timeout.mock.calls[0].arguments[0], 20_000);
+    assert.equal(timeout.mock.calls[0].arguments[1], 20_000);
+    assert.equal(clear.mock.callCount(), 1);
     assert.equal(spent(sqlite), 1);
 });
 

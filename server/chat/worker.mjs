@@ -136,13 +136,16 @@ export default {
             return json({error: "service_unavailable"}, 503);
         }
 
+        let phase = "request";
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 20_000);
         try {
             const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
                 method: "POST",
                 headers: {Authorization: "Bearer " + env.OPENAI_API_KEY, "Content-Type": "application/json"},
                 body: JSON.stringify({model: "gpt-4.1-mini", messages, max_completion_tokens: 300, store: false}),
-                redirect: "error",
-                signal: AbortSignal.timeout(20_000),
+                redirect: "manual",
+                signal: controller.signal,
             });
             if (!upstream.ok) {
                 // Log only the HTTP status and a known machine code. Provider messages
@@ -151,14 +154,20 @@ export default {
                 const known = ["invalid_api_key", "insufficient_quota", "model_not_found",
                     "rate_limit_exceeded", "unsupported_country_region_territory"];
                 const code = detail?.error?.code;
-                console.warn("chat_provider_failure", upstream.status, known.includes(code) ? code : "other");
-                return json({error: "provider_unavailable"}, 503);
+                const category = known.includes(code) ? code : "other";
+                console.warn("chat_provider_failure", upstream.status, category);
+                return json({error: "provider_unavailable", status: upstream.status, category}, 503);
             }
+            phase = "decode";
             const reply = (await upstream.json()).choices?.[0]?.message?.content;
             if (typeof reply !== "string" || !reply.trim()) return json({error: "invalid_provider_reply"}, 502);
             return json({reply: Array.from(reply.trim()).slice(0, TURN_LIMIT).join("")});
-        } catch {
-            return json({error: "provider_unavailable"}, 503);
+        } catch (error) {
+            const category = controller.signal.aborted ? "timeout" : phase === "decode" ? "invalid_response" : "transport";
+            console.warn("chat_provider_failure", category);
+            return json({error: "provider_unavailable", category}, 503);
+        } finally {
+            clearTimeout(timer);
         }
     }
 };
