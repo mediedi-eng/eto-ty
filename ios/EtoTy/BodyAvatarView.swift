@@ -2,6 +2,16 @@
 import SwiftUI
 import UIKit
 
+// The synchronized Xcode target discovers the Objective-C implementation without
+// a project-specific bridging header. Developers keep their local signing settings.
+@objc(ETBodyRendering)
+public protocol BodyRendering {
+    @objc(renderMesh:length:rgba:regions:width:height:yaw:zoom:selection:)
+    static func render(_ mesh: UnsafeRawPointer?, length: Int, rgba: UnsafeMutablePointer<UInt8>?,
+                       regions: UnsafeMutablePointer<UInt8>?, width: Int32, height: Int32,
+                       yaw: Float, zoom: Float, selection: Int32) -> Int32
+}
+
 struct BodyAvatarView: UIViewRepresentable {
     let selection: Region
     let resetToken: Int
@@ -18,6 +28,7 @@ struct BodyAvatarView: UIViewRepresentable {
 /// The color image and the organ ID under each pixel are generated from the same triangles.
 final class AvatarSurface: UIView, UIGestureRecognizerDelegate {
     var onPick: ((Region) -> Void)?
+    private static let renderer = NSClassFromString("ETBodyRenderer") as? BodyRendering.Type
     private static let mesh = Bundle.main.url(forResource: "BodyAvatar", withExtension: "mesh")
         .flatMap { try? Data(contentsOf: $0, options: .mappedIfSafe) }
     private var selected = Region.heart
@@ -101,8 +112,10 @@ final class AvatarSurface: UIView, UIGestureRecognizerDelegate {
         let success = Self.mesh?.withUnsafeBytes { (mesh: UnsafeRawBufferPointer) in
             rgba.withUnsafeMutableBytes { (pixels: UnsafeMutableRawBufferPointer) in
                 ids.withUnsafeMutableBufferPointer { ids in
-                    body_render(mesh.baseAddress, mesh.count, pixels.bindMemory(to: UInt8.self).baseAddress,
-                                ids.baseAddress, Int32(width), Int32(height), Float(yaw), Float(zoom), selectionID)
+                    Self.renderer?.render(mesh.baseAddress, length: mesh.count,
+                                          rgba: pixels.bindMemory(to: UInt8.self).baseAddress, regions: ids.baseAddress,
+                                          width: Int32(width), height: Int32(height), yaw: Float(yaw),
+                                          zoom: Float(zoom), selection: selectionID) ?? 0
                 }
             }
         }
