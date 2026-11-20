@@ -144,11 +144,20 @@ struct PersonalBriefView: View {
             } footer: {
                 Text("В PDF попадут сведения о выбранных документах и подтверждённые фрагменты. Перед сохранением можно прочитать весь текст.")
             }
-            Button("Предпросмотр") {
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            Button {
                 preview = selectedText
                 errorMessage = nil
-            }.disabled(!hasSelection)
+            } label: {
+                Text("Предпросмотр").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!hasSelection)
             .accessibilityIdentifier("brief.preview")
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+            .background(.bar)
         }
     }
 
