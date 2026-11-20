@@ -8,6 +8,7 @@ final class CareJourneyUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
+        tryFirstVisitQuestion(in: app)
         startPersonalPrevention(in: app)
 
         let composer = app.descendants(matching: .any)["care.composer"]
@@ -65,6 +66,32 @@ final class CareJourneyUITests: XCTestCase {
 
         seedSyntheticDocument(in: app)
         checkBriefFromBodyMap(in: app)
+    }
+
+    @MainActor
+    private func tryFirstVisitQuestion(in app: XCUIApplication) {
+        let start = app.buttons["care.visit.start"]
+        XCTAssertTrue(start.waitForExistence(timeout: 10))
+        let firstScreen = XCTAttachment(screenshot: app.screenshot())
+        firstScreen.name = "Founder-preview-dialog"
+        firstScreen.lifetime = .keepAlways
+        add(firstScreen)
+
+        start.tap()
+        let composer = app.descendants(matching: .any)["care.composer"]
+        composer.tap()
+        composer.typeText("Что взять на приём?")
+        app.buttons["care.send"].tap()
+        let saved = app.staticTexts["care.visit.latest"]
+        XCTAssertTrue(saved.waitForExistence(timeout: 8))
+        XCTAssertEqual(saved.label, "Что взять на приём?")
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(saved.waitForExistence(timeout: 10))
+        XCTAssertEqual(saved.label, "Что взять на приём?")
+        app.buttons["Открыть сводку к приёму"].tap()
+        XCTAssertTrue(app.switches.matching(NSPredicate(format: "label CONTAINS %@", "Что взять на приём?")).firstMatch.waitForExistence(timeout: 8))
+        app.buttons["Закрыть"].tap()
     }
 
     private func waitForValue(_ value: String, of element: XCUIElement) {
