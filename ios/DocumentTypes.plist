@@ -5,7 +5,7 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Микрофон нужен для диктовки сообщений и голосового разговора, которые ты включаешь в диалоге.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Речь превращается в текст на iPhone или, с твоего разрешения, в сервисе распознавания Apple.</string>
+	<string>В режиме «Только на iPhone» речь распознаётся на этом устройстве, чтобы превратить её в текст.</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>

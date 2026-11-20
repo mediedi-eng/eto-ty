@@ -7,13 +7,11 @@ private final class VoiceAudioProbe: VoiceAudioDriving {
     var failure: ((String) -> Void)?
     var didSpeak: (() -> Void)?
     var spoken: [String] = []
-    var networkFlags: [Bool] = []
     var finishRequests = 0
     var silenceFlags: [Bool] = []
 
-    func listen(allowNetwork: Bool, endOnSilence: Bool, onPartial: @escaping (String) -> Void,
+    func listen(endOnSilence: Bool, onPartial: @escaping (String) -> Void,
                 onFinal: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
-        networkFlags.append(allowNetwork)
         silenceFlags.append(endOnSilence)
         partial = onPartial
         final = onFinal
@@ -32,20 +30,80 @@ private final class VoiceAudioProbe: VoiceAudioDriving {
     func stop() {}
 }
 
+@MainActor
+private final class RecordedVoiceProbe: RecordedVoiceDriving {
+    var silenceFlags: [Bool] = []
+    var startImmediately = true
+    var started: (() -> Void)?
+    var transcribing: (() -> Void)?
+    var final: ((String) -> Void)?
+    var error: ((String) -> Void)?
+    var stops = 0
+
+    func listen(endOnSilence: Bool, onRecordingStarted: @escaping () -> Void,
+                onTranscribing: @escaping () -> Void,
+                onFinal: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
+        silenceFlags.append(endOnSilence)
+        started = onRecordingStarted
+        transcribing = onTranscribing
+        final = onFinal
+        error = onError
+        if startImmediately { onRecordingStarted() }
+    }
+
+    func finishListening() { transcribing?() }
+    func deliver(_ text: String) { transcribing?(); final?(text) }
+    func stop() { stops += 1 }
+}
+
 enum VoiceConversationChecks {
     @MainActor
     static func run(storage: CareStorage, docs: CareDocuments, reminders: CareReminderDelivery) async throws {
         let audio = VoiceAudioProbe()
-        let voice = VoiceConversation(audio: audio)
+        let recorder = RecordedVoiceProbe()
+        let voice = VoiceConversation(audio: audio, recorder: recorder)
         var edits: [String] = []
-        voice.startDictation(allowNetwork: false) { edits.append($0) }
+        voice.startDictation(useRecording: false) { edits.append($0) }
         let oldFinal = audio.final!
         audio.partial?("Прив")
         voice.finishListening()
         audio.final?("Привет")
         oldFinal("Лишняя копия")
         precondition(edits == ["Прив", "Привет"] && voice.mode == .idle && audio.finishRequests == 1 && audio.silenceFlags == [false])
-        precondition(audio.spoken.isEmpty && audio.networkFlags == [false])
+        precondition(audio.spoken.isEmpty && recorder.silenceFlags.isEmpty)
+
+        edits = []
+        recorder.startImmediately = false
+        voice.startDictation(useRecording: true) { edits.append($0) }
+        precondition(voice.phase == .preparing && voice.recordingStartedAt == nil)
+        let cancelledStart = recorder.started!
+        voice.stop()
+        cancelledStart()
+        precondition(voice.mode == .idle && voice.recordingStartedAt == nil)
+        voice.startDictation(useRecording: true) { edits.append($0) }
+        cancelledStart()
+        precondition(voice.phase == .preparing && voice.recordingStartedAt == nil)
+        recorder.started?()
+        precondition(voice.phase == .recording && voice.recordingStartedAt != nil)
+        precondition(edits.isEmpty && recorder.silenceFlags == [false, false])
+        recorder.startImmediately = true
+        voice.finishListening()
+        precondition(voice.phase == .transcribing && voice.recordingStartedAt == nil && edits.isEmpty)
+        recorder.final?(" Текст из аудиозаписи ")
+        precondition(voice.mode == .idle && edits == ["Текст из аудиозаписи"])
+        precondition(audio.silenceFlags == [false])
+
+        voice.startDictation(useRecording: true) { edits.append($0) }
+        voice.finishListening()
+        let lateTranscription = recorder.final!
+        voice.stop()
+        lateTranscription("Отменённый фрагмент")
+        precondition(edits.count == 1 && voice.phase == .idle)
+
+        voice.startDictation(useRecording: true) { edits.append($0) }
+        voice.finishListening()
+        recorder.error?("Сервис расшифровки недоступен.")
+        precondition(voice.issue != nil && voice.mode == .idle && edits.count == 1)
 
         let suite = "voice-tests." + UUID().uuidString
         let prefs = UserDefaults(suiteName: suite)!
@@ -59,12 +117,12 @@ enum VoiceConversationChecks {
             throw CloudChatError.connection
         }
         session.setCloudEnabled(true)
-        voice.startConversation(session: session, allowNetwork: true)
-        precondition(voice.phase == .listening)
-        audio.partial?("При")
-        precondition(session.plan.messages.count == 1)
-        audio.final?("Привет")
-        precondition(audio.silenceFlags.last == true)
+        voice.startConversation(session: session)
+        precondition(voice.phase == .recording && session.plan.messages.count == 1)
+        recorder.transcribing?()
+        precondition(voice.phase == .transcribing && session.plan.messages.count == 1)
+        recorder.final?("Привет")
+        precondition(recorder.silenceFlags.last == true)
         let voiceReply = session.plan.messages.last!.id
         precondition(voice.phase == .waiting && session.pendingCloudIDs.contains(voiceReply))
         // A newer local command and unrelated archive reply must not get voiced.
@@ -76,33 +134,37 @@ enum VoiceConversationChecks {
         precondition(session.plan.messages.last?.id != voiceReply)
         let finishedFirst = audio.didSpeak!
         finishedFirst()
-        precondition(voice.phase == .listening)
-        let listens = audio.networkFlags.count
+        precondition(voice.phase == .recording)
+        let listens = recorder.silenceFlags.count
         finishedFirst()
-        precondition(audio.networkFlags.count == listens)
-        audio.final?("Ещё раз")
+        precondition(recorder.silenceFlags.count == listens)
+        recorder.deliver("Ещё раз")
         try await wait { voice.mode == .idle && voice.issue != nil }
         precondition(audio.spoken.count == 1 && calls == 2)
         voice.clearIssue()
         precondition(voice.issue == nil)
 
-        voice.startConversation(session: session, allowNetwork: false)
-        let cancelledFinal = audio.final!
+        voice.startConversation(session: session)
+        recorder.transcribing?()
+        let cancelledFinal = recorder.final!
         voice.stop()
         let count = session.plan.messages.count
         cancelledFinal("Поздний результат")
         precondition(session.plan.messages.count == count && voice.phase == .idle)
 
         // Urgent help follows the normal local path even in service mode and ends the call.
-        voice.startConversation(session: session, allowNetwork: false)
-        audio.final?("Вызови скорую")
+        voice.startConversation(session: session)
+        recorder.deliver("Вызови скорую")
         precondition(voice.phase == .speaking && audio.spoken.last == session.plan.messages.last?.text)
         audio.didSpeak?()
         precondition(voice.mode == .idle && calls == 2)
 
         session.setCloudEnabled(false)
-        voice.startConversation(session: session, allowNetwork: false)
+        let recordings = recorder.silenceFlags.count
+        voice.startConversation(session: session)
+        precondition(voice.phase == .listening)
         audio.final?("Привет")
+        precondition(recorder.silenceFlags.count == recordings)
         precondition(voice.phase == .speaking && calls == 2)
         let lateSpeech = audio.didSpeak!
         voice.stop()

@@ -37,8 +37,9 @@ if [ -z "$developer_dir" ]; then
 fi
 export DEVELOPER_DIR="$developer_dir"
 xcode_app=$(dirname "$(dirname "$DEVELOPER_DIR")")
+xcode_project=ios/EtoTy.xcodeproj
 run_xcodebuild() {
-    xcodebuild -project ios/EtoTy.xcodeproj -scheme EtoTy -configuration Debug \
+    xcodebuild -project "$xcode_project" -scheme EtoTy -configuration Debug \
         -derivedDataPath local-data/build/ios "$@"
 }
 
@@ -121,6 +122,17 @@ if [ "$mode" = --smoke ] || [ "$mode" = --live-chat-smoke ]; then
     result_bundle="$result_dir/Journey.xcresult"
     printf 'Отчёт этого запуска XCTest: %s\n' "$result_bundle"
     if [ "$mode" = --live-chat-smoke ]; then
+        # Bundle this synthetic audio in an isolated simulator build only.
+        cp -R ios "$result_dir/ios"
+        xcode_project="$result_dir/ios/EtoTy.xcodeproj"
+        fixture="$result_dir/ios/EtoTy/EtoTyLiveRussianVoice.m4a"
+        if [ "${GITHUB_ACTIONS:-}" = true ]; then
+            source_audio="$RUNNER_TEMP/etoty-live-audio/EtoTyLiveRussianVoice.wav"
+        else
+            source_audio="$result_dir/synthetic.aiff"
+            say -v Milena -o "$source_audio" 'На столе лежит зелёное яблоко.'
+        fi
+        afconvert -f m4af -d aac -b 48000 "$source_audio" "$fixture"
         live_test=LiveConversationUITests/testTwoServiceRepliesSurviveRelaunch
         run_xcodebuild -resultBundlePath "$result_bundle" -destination "platform=iOS Simulator,id=$simulator" \
             -parallel-testing-enabled NO "-only-testing:EtoTyUITests/$live_test" \

@@ -3,69 +3,93 @@ import Foundation
 
 @MainActor
 protocol VoiceAudioDriving: AnyObject {
-    func listen(allowNetwork: Bool, endOnSilence: Bool, onPartial: @escaping (String) -> Void,
+    func listen(endOnSilence: Bool, onPartial: @escaping (String) -> Void,
                 onFinal: @escaping (String) -> Void, onError: @escaping (String) -> Void)
     func finishListening()
     func speak(_ text: String, onFinished: @escaping () -> Void, onError: @escaping (String) -> Void)
     func stop()
 }
 
+@MainActor
+protocol RecordedVoiceDriving: AnyObject {
+    func listen(endOnSilence: Bool, onRecordingStarted: @escaping () -> Void,
+                onTranscribing: @escaping () -> Void,
+                onFinal: @escaping (String) -> Void, onError: @escaping (String) -> Void)
+    func finishListening()
+    func stop()
+}
+
 #if os(iOS)
 extension VoiceAudio: VoiceAudioDriving {}
+extension RecordedVoiceAudio: RecordedVoiceDriving {}
 #endif
 
 @MainActor
 final class VoiceConversation: ObservableObject {
     enum Mode { case idle, dictation, conversation }
-    enum Phase: String { case idle, listening, waiting, speaking }
+    enum Phase: String { case idle, listening, preparing, recording, transcribing, waiting, speaking }
 
     @Published private(set) var mode = Mode.idle
     @Published private(set) var phase = Phase.idle
+    @Published private(set) var recordingStartedAt: ContinuousClock.Instant?
     @Published private(set) var transcript = ""
     @Published private(set) var issue: String?
 
     private let audio: VoiceAudioDriving
+    private let recorder: RecordedVoiceDriving
     private var turn = UUID()
     private var sessionObservation: AnyCancellable?
     private var waitDeadline: Task<Void, Never>?
     private weak var session: CareSession?
     private var profileID: UUID?
     private var replyID: UUID?
-    private var allowNetwork = false
+    private var useRecording = false
     private var cloudAtStart = false
     private var expectsServiceReply = false
     private var dictationOutput: ((String) -> Void)?
 
     #if os(iOS)
     convenience init() {
-        #if DEBUG && targetEnvironment(simulator)
-        if ProcessInfo.processInfo.arguments.contains("--eto-ty-ui-test-voice") {
-            self.init(audio: UITestVoiceAudio())
+        #if ETO_TY_LIVE_SMOKE && DEBUG && targetEnvironment(simulator)
+        if ProcessInfo.processInfo.arguments.contains("--eto-ty-ui-test-recorded-file") {
+            guard let clip = Bundle.main.url(forResource: "EtoTyLiveRussianVoice", withExtension: "m4a") else {
+                preconditionFailure("Missing synthetic live voice fixture.")
+            }
+            self.init(audio: VoiceAudio(), recorder: RecordedVoiceAudio(syntheticClip: clip))
             return
         }
         #endif
-        self.init(audio: VoiceAudio())
+        #if DEBUG && targetEnvironment(simulator)
+        if ProcessInfo.processInfo.arguments.contains("--eto-ty-ui-test-voice") {
+            self.init(audio: UITestVoiceAudio(), recorder: UITestRecordedVoiceAudio())
+            return
+        }
+        #endif
+        self.init(audio: VoiceAudio(), recorder: RecordedVoiceAudio())
     }
     #endif
 
-    init(audio: VoiceAudioDriving) { self.audio = audio }
+    init(audio: VoiceAudioDriving, recorder: RecordedVoiceDriving) {
+        self.audio = audio
+        self.recorder = recorder
+    }
 
-    func startDictation(allowNetwork: Bool, onText: @escaping (String) -> Void) {
+    func startDictation(useRecording: Bool, onText: @escaping (String) -> Void) {
         stop()
-        self.allowNetwork = allowNetwork
+        self.useRecording = useRecording
         dictationOutput = onText
         mode = .dictation
         listen()
     }
 
-    func startConversation(session: CareSession, allowNetwork: Bool) {
+    func startConversation(session: CareSession) {
         stop()
         guard !session.storageUnavailable else {
             issue = "Не удалось открыть профиль. Разблокируй iPhone и попробуй ещё раз."
             return
         }
         self.session = session
-        self.allowNetwork = allowNetwork
+        useRecording = session.cloudEnabled
         cloudAtStart = session.cloudEnabled
         profileID = session.plan.messages.first?.id
         mode = .conversation
@@ -77,6 +101,7 @@ final class VoiceConversation: ObservableObject {
     }
 
     func finishListening() {
+        if phase == .recording { recorder.finishListening() }
         if phase == .listening { audio.finishListening() }
     }
 
@@ -93,27 +118,46 @@ final class VoiceConversation: ObservableObject {
         dictationOutput = nil
         mode = .idle
         phase = .idle
+        recordingStartedAt = nil
         transcript = ""
         issue = nil
         audio.stop()
+        recorder.stop()
     }
 
     private func listen() {
         let current = UUID()
         turn = current
-        phase = .listening
         transcript = ""
-        audio.listen(allowNetwork: allowNetwork, endOnSilence: mode == .conversation, onPartial: { [weak self] text in
-            guard let self, self.turn == current, self.phase == .listening else { return }
-            self.transcript = text
-            self.dictationOutput?(text)
-        }, onFinal: { [weak self] text in
-            guard let self, self.turn == current, self.phase == .listening else { return }
+        recordingStartedAt = nil
+        phase = useRecording ? .preparing : .listening
+        let final: (String) -> Void = { [weak self] text in
+            guard let self, self.turn == current,
+                  self.phase == .transcribing || self.phase == .listening else { return }
             self.received(text.trimmingCharacters(in: .whitespacesAndNewlines))
-        }, onError: { [weak self] error in
-            guard let self, self.turn == current, self.phase == .listening else { return }
-            self.fail(error)
-        })
+        }
+        let error: (String) -> Void = { [weak self] message in
+            guard let self, self.turn == current,
+                  [.preparing, .recording, .transcribing, .listening].contains(self.phase) else { return }
+            self.fail(message)
+        }
+        if useRecording {
+            recorder.listen(endOnSilence: mode == .conversation, onRecordingStarted: { [weak self] in
+                guard let self, self.turn == current, self.phase == .preparing else { return }
+                self.recordingStartedAt = ContinuousClock().now
+                self.phase = .recording
+            }, onTranscribing: { [weak self] in
+                guard let self, self.turn == current, self.phase == .recording else { return }
+                self.recordingStartedAt = nil
+                self.phase = .transcribing
+            }, onFinal: final, onError: error)
+        } else {
+            audio.listen(endOnSilence: mode == .conversation, onPartial: { [weak self] text in
+                guard let self, self.turn == current, self.phase == .listening else { return }
+                self.transcript = text
+                self.dictationOutput?(text)
+            }, onFinal: final, onError: error)
+        }
     }
 
     private func received(_ text: String) {
@@ -131,6 +175,7 @@ final class VoiceConversation: ObservableObject {
         phase = .waiting
         // Stop capture before handing the recognized text to the ordinary message path.
         audio.stop()
+        recorder.stop()
         transcript = text
         let previous = session.plan.messages.last?.id
         session.send(text, conversation: true)

@@ -88,7 +88,7 @@ final class VoiceAudio: NSObject, AVSpeechSynthesizerDelegate {
         if ownsSession { try? audio.setActive(false, options: .notifyOthersOnDeactivation) }
     }
 
-    func listen(allowNetwork: Bool, endOnSilence: Bool, onPartial: @escaping (String) -> Void,
+    func listen(endOnSilence: Bool, onPartial: @escaping (String) -> Void,
                 onFinal: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
         stop()
         let id = token
@@ -109,24 +109,23 @@ final class VoiceAudio: NSObject, AVSpeechSynthesizerDelegate {
                 self.fail("Разреши распознавание речи для «Это ты» в настройках iPhone.")
                 return
             }
-            self.startCapture(id, allowNetwork: allowNetwork, endOnSilence: endOnSilence)
+            self.startCapture(id, endOnSilence: endOnSilence)
         }
     }
 
-    private func startCapture(_ id: UUID, allowNetwork: Bool, endOnSilence: Bool) {
+    private func startCapture(_ id: UUID, endOnSilence: Bool) {
         guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "ru-RU")),
               recognizer.isAvailable else {
             fail("Русское распознавание речи сейчас недоступно на этом iPhone.")
             return
         }
-        let local = recognizer.supportsOnDeviceRecognition
-        guard local || allowNetwork else {
+        guard recognizer.supportsOnDeviceRecognition else {
             fail("Локальное распознавание русского языка недоступно. Можно ввести сообщение с клавиатуры.")
             return
         }
         self.recognizer = recognizer
         let source = VoiceInput()
-        source.request.requiresOnDeviceRecognition = local || !allowNetwork
+        source.request.requiresOnDeviceRecognition = true
         source.request.shouldReportPartialResults = true
         source.request.taskHint = .dictation
         input = source

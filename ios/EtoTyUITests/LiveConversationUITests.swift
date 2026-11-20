@@ -49,11 +49,15 @@ final class LiveConversationUITests: XCTestCase {
 
         // Feed a synthetic recognized phrase through the real hosted service using the voice UI.
         app.buttons["care.voice.call"].tap()
-        let localSpeech = app.buttons["care.voice.consent.local"]
-        XCTAssertTrue(localSpeech.waitForExistence(timeout: 8))
-        localSpeech.tap()
-        XCTAssertTrue(app.staticTexts["Второй тестовый ход"].waitForExistence(timeout: 35),
-                      failureState(in: app))
+        let callConsent = app.buttons["care.voice.consent.cloudCall"]
+        XCTAssertTrue(callConsent.waitForExistence(timeout: 8))
+        callConsent.tap()
+        XCTAssertTrue(replies.element(boundBy: 2).waitForExistence(timeout: 35), failureState(in: app))
+        let phase = app.descendants(matching: .any)["care.voice.phase"]
+        let isRecording = NSPredicate(format: "value == %@", "recording")
+        let resumed = XCTNSPredicateExpectation(predicate: isRecording, object: phase)
+        XCTAssertEqual(XCTWaiter.wait(for: [resumed], timeout: 12), .completed,
+                       "After reading the service answer, hands-free mode should start the next recording.")
         XCTAssertEqual(replies.count, 3, "The voice turn should add one delivered service reply.")
         let newest = replies.allElementsBoundByIndex.last
         XCTAssertNotNil(newest)
@@ -63,6 +67,45 @@ final class LiveConversationUITests: XCTestCase {
         voiceFrame.lifetime = .keepAlways
         add(voiceFrame)
         app.buttons["care.voice.call"].tap()
+
+        // Swap only the microphone source. The production iPhone driver must read the M4A,
+        // POST its bytes, show what was actually transcribed, and wait for manual send.
+        app.terminate()
+        app.launchArguments = ["--eto-ty-ui-test-recorded-file"]
+        app.launch()
+        let microphone = app.buttons["care.voice.mic"]
+        XCTAssertTrue(microphone.waitForExistence(timeout: 8))
+        microphone.tap()
+        let consent = app.buttons["care.voice.consent.cloud"]
+        if consent.waitForExistence(timeout: 2) { consent.tap() }
+        let recording = XCTNSPredicateExpectation(predicate: isRecording, object: phase)
+        XCTAssertEqual(XCTWaiter.wait(for: [recording], timeout: 5), .completed)
+        microphone.tap()
+
+        let hasTranscript = NSPredicate(format: "value CONTAINS[c] %@ AND value CONTAINS[c] %@", "стол", "яблок")
+        let draft = XCTNSPredicateExpectation(predicate: hasTranscript, object: composer)
+        XCTAssertEqual(XCTWaiter.wait(for: [draft], timeout: 60), .completed,
+                       "The real transcriber did not return the two expected words to the draft.")
+        let postedTranscript = app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier == %@ AND label CONTAINS[c] %@", "care.message.user", "яблок"
+        )).firstMatch
+        XCTAssertFalse(postedTranscript.exists, "Finishing a dictation must not send the draft into chat.")
+        app.buttons["care.send"].tap()
+        XCTAssertTrue(postedTranscript.waitForExistence(timeout: 6))
+        // The list may recycle older offscreen bubbles. Look at the adjacent user/answer pair.
+        let messages = app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier == %@ OR identifier == %@", "care.message.user", "care.message.service"
+        ))
+        let delivered = NSPredicate { _, _ in
+            let rows = messages.allElementsBoundByIndex
+            guard let index = rows.firstIndex(where: {
+                $0.identifier == "care.message.user" && $0.label.localizedCaseInsensitiveContains("яблок")
+            }), index + 1 < rows.count else { return false }
+            let next = rows[index + 1]
+            return next.identifier == "care.message.service" && next.label.hasPrefix("Это ты · ИИ") && next.isHittable
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: delivered, object: app)],
+                                     timeout: 35), .completed, failureState(in: app))
     }
 
     @MainActor

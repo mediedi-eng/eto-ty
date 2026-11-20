@@ -197,3 +197,148 @@ test("health, unsupported methods and unrelated paths do not open the database o
     assert.equal((await worker.fetch(new Request(origin + "/elsewhere"), {})).status, 404);
     assert.equal(fetcher.mock.callCount(), 0);
 });
+
+// 100 ms of synthetic silence, encoded as mono AAC-LC at 16 kHz by ffmpeg.
+const recording = Buffer.from("AAAAHGZ0eXBNNEEgAAACAE00QSBpc29taXNvMgAAAAhmcmVlAAAAJW1kYXTeAgBMYXZjNjEuMTkuMTAxAAIwQA4BGCAHARggBwAAAwZtb292AAAAbG12aGQAAAAAAAAAAAAAAAAAAAPoAAAAZAABAAABAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAACMXRyYWsAAABcdGtoZAAAAAMAAAAAAAAAAAAAAAEAAAAAAAAAZAAAAAAAAAAAAAAAAQEAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAACRlZHRzAAAAHGVsc3QAAAAAAAAAAQAAAGQAAAQAAAEAAAAAAaltZGlhAAAAIG1kaGQAAAAAAAAAAAAAAAAAAD6AAAAKQFXEAAAAAAAtaGRscgAAAAAAAAAAc291bgAAAAAAAAAAAAAAAFNvdW5kSGFuZGxlcgAAAAFUbWluZgAAABBzbWhkAAAAAAAAAAAAAAAkZGluZgAAABxkcmVmAAAAAAAAAAEAAAAMdXJsIAAAAAEAAAEYc3RibAAAAGpzdHNkAAAAAAAAAAEAAABabXA0YQAAAAAAAAABAAAAAAAAAAAAAQAQAAAAAD6AAAAAAAA2ZXNkcwAAAAADgICAJQABAASAgIAXQBUAAAAAALuAAAAFhgWAgIAFFAhW5QAGgICAAQIAAAAgc3R0cwAAAAAAAAACAAAAAgAABAAAAAABAAACQAAAABxzdHNjAAAAAAAAAAEAAAABAAAAAwAAAAEAAAAgc3RzegAAAAAAAAAAAAAAAwAAABUAAAAEAAAABAAAABRzdGNvAAAAAAAAAAEAAAAsAAAAGnNncGQBAAAAcm9sbAAAAAIAAAAB//8AAAAcc2JncAAAAAByb2xsAAAAAQAAAAMAAAABAAAAYXVkdGEAAABZbWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAbWRpcmFwcGwAAAAAAAAAAAAAAAAsaWxzdAAAACSpdG9vAAAAHGRhdGEAAAABAAAAAExhdmY2MS43LjEwMw==", "base64");
+
+function voiceRequest(bytes = recording, headers = {}) {
+    return new Request(origin + "/v1/transcribe", {
+        method: "POST",
+        headers: {"Content-Type": "audio/mp4", "CF-Connecting-IP": "192.0.2.1", ...headers},
+        body: bytes, duplex: "half",
+    });
+}
+
+function voiceSpent(db) {
+    return db.prepare("SELECT count(*) AS n FROM pilot_transcription_reservations").get().n;
+}
+
+test("a real AAC M4A is reserved separately and sent as a named multipart file", async t => {
+    const {env, sqlite} = database(t);
+    const fetcher = t.mock.method(globalThis, "fetch", async (url, options) => {
+        assert.equal(url, "https://api.openai.com/v1/audio/transcriptions");
+        assert.equal(voiceSpent(sqlite), 1);
+        assert.equal(spent(sqlite), 0);
+        assert.deepEqual(options.headers, {Authorization: "Bearer " + fixtureKey});
+        assert.equal(options.redirect, "manual");
+        assert.equal(options.body.get("model"), "gpt-transcribe");
+        assert.deepEqual(options.body.getAll("languages[]"), ["ru"]);
+        assert.deepEqual([...options.body.keys()].sort(), ["file", "languages[]", "model"]);
+        const file = options.body.get("file");
+        assert.equal(file.name, "voice.m4a");
+        assert.equal(file.type, "audio/mp4");
+        assert.deepEqual(Buffer.from(await file.arrayBuffer()), recording);
+        return Response.json({text: " Привет! "});
+    });
+    const result = await worker.fetch(voiceRequest(), env);
+    assert.equal(fetcher.mock.callCount(), 1);
+    assert.equal(result.status, 200);
+    assert.equal(result.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await result.json(), {text: "Привет!"});
+    const row = sqlite.prepare("SELECT * FROM pilot_transcription_reservations").get();
+    assert.deepEqual(Object.keys(row), ["day", "client_tag"]);
+    assert.match(row.client_tag, /^[0-9a-f]{64}$/);
+});
+
+test("audio type, container, duration and streamed bytes are checked before quota", async t => {
+    const {env, sqlite} = database(t);
+    const upstream = t.mock.method(globalThis, "fetch", goodReply);
+    const changed = (marker, offset, value) => {
+        const audio = Buffer.from(recording);
+        const at = audio.indexOf(marker);
+        assert.ok(at > 0);
+        audio.writeUInt32BE(value, at + offset);
+        return audio;
+    };
+    const requests = [
+        [voiceRequest(recording, {"Content-Type": "audio/wav"}), 415],
+        [voiceRequest(null), 400],
+        [voiceRequest(Buffer.from("not an audio file")), 400],
+        [voiceRequest(recording.subarray(0, 40)), 400],
+        [voiceRequest(changed("mdhd", 20, 16000 * 126)), 413],
+        [voiceRequest(changed("stts", 16, 16000 * 126)), 413],
+        [voiceRequest(changed("mp4a", 0, 0x61766331)), 400],
+        [voiceRequest(changed("soun", 0, 0x76696465)), 400],
+        [voiceRequest(changed("stsz", 12, 2000)), 400],
+        [voiceRequest(recording, {"content-length": String(2 * 1024 * 1024 + 1)}), 413],
+        [new Request(origin + "/v1/transcribe"), 405],
+    ];
+    for (const [req, expected] of requests) assert.equal((await worker.fetch(req, env)).status, expected);
+    for (const headers of [{}, {"content-length": "1"}]) {
+        let cancelled = false;
+        const stream = new ReadableStream({
+            pull(controller) { controller.enqueue(new Uint8Array(1024 * 1024 + 1)); },
+            cancel() { cancelled = true; },
+        });
+        assert.equal((await worker.fetch(voiceRequest(stream, headers), env)).status, 413);
+        assert.ok(cancelled);
+    }
+    assert.equal(upstream.mock.callCount(), 0);
+    assert.equal(sqlite.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE name='pilot_transcription_reservations'").get().n, 0);
+});
+
+test("racing uploads spend their own daily and trial quota", async t => {
+    const {env, sqlite} = database(t);
+    const upstream = t.mock.method(globalThis, "fetch", () => Response.json({text: "да"}));
+    const statuses = async (n, distinct = false) => Promise.all(Array.from({length: n}, (_, i) =>
+        worker.fetch(voiceRequest(recording, distinct ? {"CF-Connecting-IP": "198.51.100." + i} : {}), env)
+            .then(r => r.status)));
+    const first = await statuses(20);
+    assert.equal(first.filter(n => n === 200).length, 12);
+    assert.equal(first.filter(n => n === 429).length, 8);
+    const daily = await statuses(60, true);
+    assert.equal(daily.filter(n => n === 200).length, 48);
+    assert.equal(daily.filter(n => n === 429).length, 12);
+    sqlite.exec("UPDATE pilot_transcription_reservations SET day = '2000-01-01'");
+    const seed = sqlite.prepare("INSERT INTO pilot_transcription_reservations VALUES ('2000-01-01', 'old')");
+    for (let i = 0; i < 189; i++) seed.run();
+    const trial = await statuses(5, true);
+    assert.equal(trial.filter(n => n === 200).length, 1);
+    assert.equal(trial.filter(n => n === 429).length, 4);
+    assert.equal(voiceSpent(sqlite), 250);
+    assert.equal(spent(sqlite), 0);
+    assert.equal(upstream.mock.callCount(), 61);
+});
+
+test("transcription reports silence, oversized transcripts and provider failures without disclosing content", async t => {
+    const {env, sqlite} = database(t);
+    const fixtures = [
+        [() => Response.json({text: " "}), 422, "no_speech"],
+        [() => Response.json({text: "🚀".repeat(4001)}), 422, "transcript_too_long"],
+        [() => Response.json({}), 502, "invalid_provider_reply"],
+        [() => Response.json({error: "sensitive provider error"}, {status: 500}), 503, "provider_unavailable"],
+        [() => { throw new Error("sensitive transport error"); }, 503, "provider_unavailable"],
+    ];
+    const upstream = t.mock.method(globalThis, "fetch", () => Response.json({text: "🚀".repeat(4000)}));
+    const boundary = await worker.fetch(voiceRequest(), env);
+    assert.equal(boundary.status, 200);
+    assert.equal((await boundary.json()).text, "🚀".repeat(4000));
+    for (const [reply, status, error] of fixtures) {
+        upstream.mock.mockImplementation(reply);
+        const result = await worker.fetch(voiceRequest(), env);
+        assert.equal(result.status, status);
+        assert.deepEqual(await result.json(), {error});
+    }
+    assert.equal(voiceSpent(sqlite), 1 + fixtures.length);
+});
+
+test("transcription has a 45-second upstream deadline and fails closed without quota storage or credentials", async t => {
+    const {env, sqlite} = database(t);
+    let abort;
+    const timer = t.mock.method(globalThis, "setTimeout", fn => { abort = fn; return 1; });
+    const clear = t.mock.method(globalThis, "clearTimeout", () => {});
+    const upstream = t.mock.method(globalThis, "fetch", (_url, {signal}) => {
+        const pending = new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason)));
+        abort();
+        return pending;
+    });
+    for (const config of [{DB: env.DB}, {...env, DB: {}}, {...env, DB: undefined}]) {
+        assert.equal((await worker.fetch(voiceRequest(), config)).status, 503);
+    }
+    assert.equal(upstream.mock.callCount(), 0);
+    assert.equal((await worker.fetch(voiceRequest(), env)).status, 503);
+    assert.equal(timer.mock.calls[0].arguments[1], 45_000);
+    assert.equal(clear.mock.callCount(), 1);
+    assert.equal(voiceSpent(sqlite), 1);
+    assert.equal(spent(sqlite), 0);
+});

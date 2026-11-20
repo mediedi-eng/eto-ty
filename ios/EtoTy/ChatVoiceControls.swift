@@ -5,41 +5,47 @@ enum ChatVoiceAction: Hashable {
     case dictate, talk
 }
 
-enum SpeechPrivacyChoice: String {
-    case ask, device, appleIfNeeded
-    static let key = "personal.voice.recognition.v1"
+enum RecordedVoiceConsent {
+    static let dictation = "personal.voice.openai.recorded.dictation.v1"
+    static let conversation = "personal.voice.openai.recorded.conversation.v1"
 }
 
 struct ChatVoiceConsent: View {
     let action: ChatVoiceAction
     let online: Bool
-    let choose: (SpeechPrivacyChoice) -> Void
+    let choose: () -> Void
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    if action == .dictate {
-                        Text("Говори по-русски и нажми стоп, когда закончишь. Текст можно исправить и отправить стрелкой.")
+                    if online {
+                        Text("Для расшифровки приложение передаст запись микрофона через сервис «Это ты» в OpenAI.")
                     } else {
-                        Text("После паузы твоя фраза отправится в диалог. Ответ прозвучит вслух, затем микрофон включится снова. Кнопкой завершения можно остановить разговор в любой момент.")
+                        Text("Речь распознаётся на этом iPhone.")
+                    }
+                    if action == .dictate {
+                        Text("Нажми стоп, когда закончишь. Расшифровка появится в поле сообщения. Её можно исправить и отправить стрелкой.")
+                    } else {
+                        Text("После паузы фраза автоматически отправится в диалог. Ответ прозвучит вслух, затем микрофон включится снова.")
                         if online {
-                            Text("Текст каждой реплики и до трёх предыдущих пар реплик онлайн-диалога получит OpenAI.")
+                            Text("OpenAI получит расшифрованный текст и до трёх предыдущих пар реплик онлайн-диалога для ответа.")
                         }
                     }
                 }
                 Section {
-                    Button("Распознавать на iPhone") { choose(.device) }
-                        .accessibilityIdentifier("care.voice.consent.local")
                     if online {
-                        Button("Разрешить Apple, если нужно") { choose(.appleIfNeeded) }
-                            .accessibilityIdentifier("care.voice.consent.apple")
+                        Button(action == .dictate ? "Разрешить и записать" : "Разрешить и начать разговор", action: choose)
+                            .accessibilityIdentifier(action == .dictate ? "care.voice.consent.cloud" : "care.voice.consent.cloudCall")
+                    } else {
+                        Button("Распознавать на iPhone", action: choose)
+                            .accessibilityIdentifier("care.voice.consent.local")
                     }
                 } footer: {
-                    Text(online
-                         ? "Первый вариант использует локальное распознавание русского языка. Во втором iPhone может передать звук в сервис распознавания Apple. Приложение сохраняет в переписке только отправленный текст."
-                         : "В режиме «Только на iPhone» звук обрабатывается на устройстве.")
+                    if online {
+                        Text("Каждая запись длится до двух минут. Разрешение для этого режима можно сбросить в настройках приватности диалога.")
+                    }
                 }
             }
             .navigationTitle(action == .dictate ? "Диктовка" : "Голосовой разговор")
@@ -65,13 +71,29 @@ struct ChatVoiceStatus: View {
                 }.font(.footnote)
             } else if voice.mode != .idle {
                 HStack {
-                    Image(systemName: voice.phase == .speaking ? "speaker.wave.2.fill" : "waveform")
-                        .accessibilityHidden(true)
-                    Text(status).font(.subheadline.weight(.medium))
+                    if voice.phase == .recording, let started = voice.recordingStartedAt {
+                        Image(systemName: "record.circle.fill").foregroundStyle(.red)
+                            .accessibilityHidden(true)
+                        Text(status).font(.subheadline.weight(.semibold))
+                        TimelineView(.periodic(from: .now, by: 1)) { _ in
+                            let elapsed = Int(started.duration(to: ContinuousClock().now).components.seconds)
+                            Text(verbatim: String(format: "%02d:%02d", elapsed / 60, elapsed % 60))
+                                .font(.subheadline.monospacedDigit())
+                        }
+                    } else {
+                        Image(systemName: voice.phase == .speaking ? "speaker.wave.2.fill" : "waveform")
+                            .accessibilityHidden(true)
+                        Text(status).font(.subheadline.weight(.medium))
+                    }
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityValue(voice.phase.rawValue)
                 .accessibilityIdentifier("care.voice.phase")
+                if voice.mode == .dictation && [.preparing, .recording, .transcribing].contains(voice.phase) {
+                    Button(voice.phase == .transcribing ? "Отменить расшифровку" : "Отменить запись") { voice.stop() }
+                        .font(.footnote)
+                        .accessibilityIdentifier("care.voice.cancel")
+                }
                 if voice.mode == .conversation && voice.phase == .listening && !voice.transcript.isEmpty {
                     Text(voice.transcript).font(.callout).foregroundStyle(.secondary).lineLimit(3)
                 }
@@ -85,6 +107,9 @@ struct ChatVoiceStatus: View {
         switch voice.phase {
         case .idle: return ""
         case .listening: return voice.mode == .dictation ? "Диктовка" : "Слушаю"
+        case .preparing: return "Готовлю микрофон…"
+        case .recording: return "Запись"
+        case .transcribing: return "Расшифровываю…"
         case .waiting: return "Готовлю ответ"
         case .speaking: return "Отвечаю вслух"
         }
