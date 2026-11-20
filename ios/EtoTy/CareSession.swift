@@ -22,6 +22,7 @@ final class CareSession: ObservableObject {
     @Published private(set) var contactSuggestionToken = 0
     @Published private(set) var archivedDocuments: [CareDocument] = []
     @Published private(set) var archiveAvailable = false
+    @Published private(set) var generatingReplyID: UUID?
 
     var documentSuggestion: CareDocumentFollowUp? {
         guard archiveAvailable else { return nil }
@@ -38,6 +39,8 @@ final class CareSession: ObservableObject {
     private let reminders: CareReminderDelivery
     private let now: () -> Date
     private let liveClock: Bool
+    private let generateReply: ([CareMessage]) async -> String?
+    private var replyTask: Task<Void, Never>?
     private var clock: Task<Void, Never>?
     private var reminderTask: Task<Void, Never>?
     private var deliveryRevision = 0
@@ -48,12 +51,14 @@ final class CareSession: ObservableObject {
     }
 
     init(storage: CareStorage, documents: CareDocuments, reminders: CareReminderDelivery,
-         now: @escaping () -> Date = Date.init, liveClock: Bool = true) {
+         now: @escaping () -> Date = Date.init, liveClock: Bool = true,
+         generateReply: @escaping ([CareMessage]) async -> String? = CareConversationModel.answer) {
         self.storage = storage
         self.documents = documents
         self.reminders = reminders
         self.now = now
         self.liveClock = liveClock
+        self.generateReply = generateReply
         restore()
         reminders.onEvent = { [weak self] event in
             guard let self else { return }
@@ -63,17 +68,41 @@ final class CareSession: ObservableObject {
     }
 
     deinit {
+        replyTask?.cancel()
         clock?.cancel()
         reminderTask?.cancel()
     }
 
-    func send(_ text: String) {
+    func send(_ text: String, conversation: Bool = false) {
         let instant = now()
-        guard apply({ $0.receive(text, now: instant) }), plan.topic != nil,
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              apply({ $0.receive(text, now: instant, conversation: conversation) }) else { return }
+        replyTask?.cancel()
+        generatingReplyID = nil
+        if let latest = plan.messages.last, let kind = latest.kind {
+            if kind != .greeting && kind != .help {
+                let history = Array(plan.messages.dropLast().suffix(7))
+                generatingReplyID = latest.id
+                replyTask = Task { [weak self, generateReply] in
+                    let result = await generateReply(history)
+                    guard let self, !Task.isCancelled, self.generatingReplyID == latest.id else { return }
+                    self.generatingReplyID = nil
+                    if let result, self.plan.messages.last?.id == latest.id {
+                        self.apply { $0.replaceConversationReply(id: latest.id, with: result) }
+                    }
+                }
+            }
+            return
+        }
+        guard plan.topic != nil,
               !plan.isPaused, !plan.isClosed, !plan.isAskingForUrgentHelp, CareHistoryQuery.parse(text) == nil,
               let date = ContactTimeSuggestion.parse(text, now: instant) else { return }
         suggestedContact = date
         contactSuggestionToken += 1
+    }
+
+    func makeConversationTopic(replyID: UUID) {
+        apply { $0.makeConversationTopic(replyID: replyID, now: self.now()) }
     }
 
     @discardableResult
@@ -189,6 +218,8 @@ final class CareSession: ObservableObject {
     }
 
     func deleteProfile() {
+        replyTask?.cancel()
+        generatingReplyID = nil
         // Removing attachments first also makes a partially completed deletion safe to retry.
         do {
             try documents.deleteAll()

@@ -25,6 +25,20 @@ enum SessionChecks {
         let storage = CareStorage(directory: root.appendingPathComponent("profile"))
         let docs = CareDocuments(directory: root.appendingPathComponent("files"))
         let delivery = SessionReminderProbe()
+        let chatStorage = CareStorage(directory: root.appendingPathComponent("chat"))
+        var modelTurns = 0
+        let chat = CareSession(storage: chatStorage, documents: docs, reminders: SessionReminderProbe(),
+                               liveClock: false, generateReply: { history in
+            modelTurns += 1
+            precondition(history.last?.fromUser == true && history.last?.text == "Хочу поговорить")
+            precondition(history.contains(where: { $0.kind == .greeting }))
+            return "О чём ты хочешь поговорить?"
+        })
+        chat.send("Привет", conversation: true)
+        precondition(chat.plan.topic == nil && chat.generatingReplyID == nil)
+        chat.send("Хочу поговорить", conversation: true)
+        try await waitUntil { chat.plan.messages.last?.kind == .model }
+        precondition(modelTurns == 1 && tryLoad(chatStorage)?.messages.last?.text == "О чём ты хочешь поговорить?")
         var instant = Date(timeIntervalSince1970: 1_900_000_000)
         let session = CareSession(storage: storage, documents: docs, reminders: delivery,
                                   now: { instant }, liveClock: false)

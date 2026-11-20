@@ -35,14 +35,17 @@ jobs:
           path: local-data/first-dialog.png
           retention-days: 7
   device-build:
-    runs-on: macos-15-intel
+    runs-on: macos-26
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - name: Compile for a physical iPhone without a personal certificate
-        run: xcodebuild -project ios/EtoTy.xcodeproj -scheme EtoTy -configuration Debug -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
+        run: |
+          sdk=$(xcrun --sdk iphoneos --show-sdk-version)
+          test "${sdk%%.*}" -ge 26
+          xcodebuild -project ios/EtoTy.xcodeproj -scheme EtoTy -configuration Debug -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
   evidence:
     runs-on: ubuntu-24.04
     timeout-minutes: 10

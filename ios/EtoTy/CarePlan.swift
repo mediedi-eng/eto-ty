@@ -43,17 +43,24 @@ struct CareWeeklyContact: Codable, Equatable {
     }
 }
 
+enum CareReplyKind: String, Codable {
+    case greeting, help, sleep, clarify, followUp, draft, model
+}
+
 struct CareMessage: Identifiable, Codable, Equatable {
     let id: UUID
     let text: String
     let fromUser: Bool
     let createdAt: Date
+    let kind: CareReplyKind?
 
-    init(_ text: String, fromUser: Bool = false, at date: Date = Date()) {
-        self.id = UUID()
+    init(_ text: String, fromUser: Bool = false, at date: Date = Date(),
+         kind: CareReplyKind? = nil, id: UUID = UUID()) {
+        self.id = id
         self.text = text
         self.fromUser = fromUser
         self.createdAt = date
+        self.kind = kind
     }
 }
 
@@ -217,7 +224,7 @@ struct CarePlan: Codable, Equatable {
         return directRequests.contains { request == $0 || request.hasPrefix($0 + " ") }
     }
 
-    mutating func receive(_ text: String, now: Date = Date()) {
+    mutating func receive(_ text: String, now: Date = Date(), conversation: Bool = false) {
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return }
 
@@ -308,6 +315,14 @@ struct CarePlan: Codable, Equatable {
         case "перенести", "перенеси", "изменить время", "когда напомнишь":
             reply(statusText + (topic != nil && !isClosed && !isPaused ? " Другой срок можно выбрать в карточке дела." : ""), at: now)
         default:
+            if conversation && ContactTimeSuggestion.parse(value, now: now) == nil {
+                let previous = messages.dropLast().last
+                let response = conversationReply(command, previous: previous, at: now)
+                if !hasDueQuestion || value.hasSuffix("?") || response.kind == .greeting || response.kind == .help {
+                    messages.append(response)
+                    return
+                }
+            }
             if topic == nil || isClosed {
                 topic = value
                 isClosed = false
@@ -337,6 +352,47 @@ struct CarePlan: Codable, Equatable {
                 reply("Запись добавлена к делу. Можно выбрать, когда вернуться к нему, или завершить его.", at: now)
             }
         }
+    }
+
+    private func conversationReply(_ command: String, previous: CareMessage?, at now: Date) -> CareMessage {
+        func answer(_ text: String, _ kind: CareReplyKind) -> CareMessage {
+            CareMessage(text, at: now, kind: kind)
+        }
+        let words = command.split { !$0.isLetter }
+        switch words.joined(separator: " ") {
+        case "привет", "приветик", "здравствуй", "здравствуйте", "добрый день", "доброе утро", "добрый вечер", "hi", "hello", "привет привет", "привет как дела", "привет ты тут", "ты тут", "салам":
+            return answer("Привет! Что привело тебя сегодня? Можно просто поговорить о том, что тебя волнует.", .greeting)
+        case "что ты умеешь", "что умеешь", "как это работает", "с чего начать", "помощь":
+            return answer("Можем разобрать, что ты хочешь обсудить с врачом, найти твои документы или выбрать первый шаг в профилактике. С чего начнём?", .help)
+        default: break
+        }
+        if words.contains(where: { ["сон", "сном", "сплю", "уснуть", "заснуть", "засыпаю", "просыпаюсь", "бессонница", "высыпаюсь"].contains($0) }), previous?.kind != .sleep {
+            return answer("Давай разберёмся со сном. Что именно хочется изменить — как засыпаешь, сколько спишь или как чувствуешь себя утром?", .sleep)
+        }
+        if previous?.kind == .sleep {
+            return answer("А как давно ты это замечаешь? Если захочешь обсудить сон на приёме, сможем собрать из твоих слов один вопрос врачу.", .followUp)
+        }
+        if previous?.kind == .clarify || previous?.kind == .followUp {
+            return answer("Что ты больше всего хотел бы выяснить на приёме? Напиши это своими словами. Вопрос можно перенести в сводку кнопкой под ответом.", .draft)
+        }
+        if previous?.kind == .draft || messages.last?.text.hasSuffix("?") == true {
+            return answer("Можем подготовить этот вопрос к приёму. Нажми «В вопрос врачу», чтобы отредактировать формулировку перед сохранением, или продолжай писать здесь.", .draft)
+        }
+        return answer("Что в этом для тебя самое важное сейчас? Например, понять, что изменилось, или подготовиться к разговору с врачом?", .clarify)
+    }
+
+    mutating func replaceConversationReply(id: UUID, with text: String) {
+        guard let current = messages.last, current.id == id, current.kind != nil else { return }
+        messages[messages.count - 1] = CareMessage(text, at: current.createdAt, kind: .model, id: id)
+    }
+
+    mutating func makeConversationTopic(replyID: UUID, now: Date) {
+        guard canStartPreparationGoal, messages.last?.id == replyID, messages.last?.kind != nil,
+              let message = messages.dropLast().last, message.fromUser else { return }
+        topic = message.text
+        isClosed = false
+        lastAnswer = nil
+        reply("Дело создано. Если захочешь к нему вернуться, выбери время.", at: now)
     }
 
     mutating func schedule(at date: Date, now: Date = Date(), weekly: Bool = false,

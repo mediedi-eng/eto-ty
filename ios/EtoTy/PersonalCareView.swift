@@ -194,6 +194,9 @@ struct PersonalCareView: View {
                             ForEach(session.plan.messages) { message in
                                 CareBubble(message: message, accent: accent)
                                     .id(message.id)
+                                if message.id == session.plan.messages.last?.id, message.kind != nil {
+                                    conversationActions(for: message)
+                                }
                             }
                         }
                         if !showsWelcome && !session.plan.isAskingForUrgentHelp && !session.storageUnavailable {
@@ -243,9 +246,9 @@ struct PersonalCareView: View {
                     }.padding()
                 }
                 .scrollDismissesKeyboard(.interactively)
-                .onAppear { proxy.scrollTo("latest", anchor: .bottom) }
+                .onAppear { scrollToReply(proxy) }
                 .onChange(of: session.plan.messages.last?.id) { _, _ in
-                    proxy.scrollTo("latest", anchor: .bottom)
+                    scrollToReply(proxy)
                 }
                 .onChange(of: session.documentSuggestion?.id) { _, newID in
                     if newID != nil { proxy.scrollTo("latest", anchor: .bottom) }
@@ -287,6 +290,36 @@ struct PersonalCareView: View {
     private var showsWelcome: Bool {
         session.plan.topic == nil && session.plan.messages.count == 1 &&
             !session.plan.isAskingForUrgentHelp && !session.storageUnavailable
+    }
+
+    private func scrollToReply(_ proxy: ScrollViewProxy) {
+        if let reply = session.plan.messages.last, reply.kind != nil {
+            proxy.scrollTo(reply.id, anchor: .center)
+        } else {
+            proxy.scrollTo("latest", anchor: .bottom)
+        }
+    }
+
+    @ViewBuilder private func conversationActions(for reply: CareMessage) -> some View {
+        if session.generatingReplyID == reply.id {
+            HStack {
+                ProgressView()
+                Text("Готовлю ответ на iPhone…").font(.footnote)
+            }
+        }
+        if reply.kind != .greeting && reply.kind != .help,
+           let user = session.plan.messages.dropLast().last, user.fromUser {
+            HStack {
+                Button("В вопрос врачу") {
+                    if questionDraft.isEmpty { questionDraft = user.text }
+                    startVisitQuestion()
+                }
+                if session.plan.canStartPreparationGoal {
+                    Button("Сделать делом") { session.makeConversationTopic(replyID: reply.id) }
+                }
+            }
+            .buttonStyle(.bordered)
+        }
     }
 
     private var welcomeCard: some View {
@@ -522,7 +555,7 @@ struct PersonalCareView: View {
             return
         }
         let before = session.plan.messages.last?.id
-        session.send(draft)
+        session.send(draft, conversation: true)
         if session.plan.messages.last?.id != before {
             draft = ""
             showSavedVisitQuestion = false
@@ -721,7 +754,7 @@ private struct CareBubble: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(message.fromUser ? "Ты" : "Это ты")
+            Text(message.fromUser ? "Ты" : message.kind == .model ? "ИИ на iPhone" : message.kind != nil ? "Помощник · встроенный ответ" : "Это ты")
                 .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             Text(message.text).textSelection(.enabled)
         }.padding(12)
