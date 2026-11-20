@@ -214,3 +214,147 @@ padding = (-(30+len(entry.filename)+4))%64
 entry.extra = struct.pack("<HH",0xffff,padding)+bytes(padding)
 with zipfile.ZipFile(sys.argv[2],"w",compression=zipfile.ZIP_STORED) as package:
     package.writestr(entry,'\n'.join(usd)+'\n')
+
+# Pack the figure and fine anatomical details for the on-device rasterizer.
+# Vertices stay in metres. One material tag per triangle also drives organ picking.
+def tube(name, mat, path, radius, sides=8):
+    points = np.asarray(path, dtype=float)
+    vertices, polygons = [], []
+    for i, center in enumerate(points):
+        direction = points[min(i + 1, len(points) - 1)] - points[max(i - 1, 0)]
+        direction /= np.linalg.norm(direction)
+        reference = [0, 0, 1] if abs(direction[2]) < .92 else [1, 0, 0]
+        u = np.cross(reference, direction)
+        u /= np.linalg.norm(u)
+        w = np.cross(direction, u)
+        r = radius * (1 - .48 * i / (len(points) - 1))
+        for j in range(sides):
+            a = math.tau * j / sides
+            vertices.append(center + r * (u * math.cos(a) + w * math.sin(a)))
+            if i:
+                k = (j + 1) % sides
+                polygons.append([(i-1)*sides+j, (i-1)*sides+k, i*sides+k, i*sides+j])
+    mesh(name, vertices, polygons, mat)
+
+
+# Coronary arteries follow the front and sides of the ventricular surface.
+for j, start in enumerate([.48, 1.16, 1.92, 2.62, 4.65]):
+    def coronary(t, offset=0):
+        x, y, z = heart(t, start + .42 * math.sin(t*3.1) + offset)
+        return [x, y, z + .021*math.sin(start)]
+    tube("Coronary", "coronary", [coronary(t) for t in np.linspace(.28,.89,26)], .037)
+    for k, t0 in enumerate([.42,.57,.71]):
+        tube("CoronaryBranch","coronary",[coronary(t0+.13*u, (.39 if k%2 else -.43)*u)
+                                         for u in np.linspace(0,1,12)], .022)
+
+for x, shift in [(-.05,-.16),(.09,.03),(.22,.20)]:
+    tube("AorticBranch","artery",[[x,4.81,.76],[x+.03,5.04,.72],
+                                   [x+shift,5.23,.65]],.065)
+for side in [-1,1]:
+    # Twin venous and arterial paths are intentionally subdued behind the organs.
+    tube("Trunk","vessels",[[side*.14,4.58,.48],[side*.15,3.9,.12],[side*.17,3.2,.04],
+                            [side*.12,2.2,-.02],[side*.11,1.12,.07],[side*.63,.12,.12],
+                            [side*.75,-1.5,.1],[side*.65,-2.75,-.10]], .072)
+    tube("Renal","vessels",[[side*.13,2.52,.04],[side*.39,2.48,.04],[side*.62,2.34,.13]],.048)
+    for k in range(8):
+        y = 5.10 - .224*k
+        path = []
+        for a in np.linspace(.05,2.96,32):
+            path.append([side*(1.23+.10*math.sin(k*.47))*math.sin(a),
+                         y-.34*math.sin(a)-.14*(1-math.cos(a)),
+                         .40+.75*math.cos(a)])
+        tube("Rib","rib",path,.032 if k<5 else .025)
+
+# Sculpt the atrial appendages, coronary groove, liver lobes and renal indentation.
+ellipsoid("RightAuricle", "heart", np.array([-.20,4.35,.83]), [.28,.23,.23])
+ellipsoid("LeftAuricle", "heart", np.array([.58,4.38,.80]), [.25,.18,.20])
+tube("Cava","vein",[[-.34,4.23,.76],[-.39,4.48,.74],[-.42,4.78,.69],[-.43,4.89,.66]],.13)
+tube("CoronaryGroove","coronary",[[x,4.20-.16*math.sin(a),.73+.46*math.sin(a)]
+      for a in np.linspace(.2,2.9,24) for x in [.23+.57*math.cos(a)]],.038)
+for k in range(17):
+    y = 4.89 - .23*k
+    ellipsoid("Vertebra","spine",np.array([0,y,-.28-.24*math.sin(k*.21)]),
+              [.19+.003*k,.105,.16])
+for side in [-1,1]:
+    tube("Collar","rib",[[side*x,y,z] for x,y,z in [(0.1,5.21,.85),(.45,5.30,.86),
+                          (.82,5.36,.77),(1.22,5.32,.65),(1.53,5.24,.51)]],.060)
+    for k in range(4):
+        tr = k*.19
+        tube("Bronchus","bronchus",[[side*(.64+tr),4.78,.42],[side*(.69+tr),4.55,.54],
+             [side*(.78+tr),4.24,.64],[side*(.93+tr),4.06,.64]],.038)
+
+# Swept locks share the existing forehead/hairline, with raised tapered strands on the crown.
+hair_ids = sorted({i for polygon in hair for i in polygon})
+cap = scalp[hair_ids]
+for i in range(38):
+    angle = math.tau*i/38
+    start_lat = .12 + .07*math.sin(3*angle)
+    end_lat = 1.10+.25*(1-math.cos(angle))
+    path = []
+    for t in np.linspace(0,1,18):
+        lat = start_lat+(end_lat-start_lat)*t
+        a = angle-.58*(1-t)
+        direction=np.array([math.sin(lat)*math.sin(a),math.cos(lat),math.sin(lat)*math.cos(a)])
+        center=np.array([0,7.43,.51])
+        vectors=(cap-center)/[.88,1.06,.97]
+        unit=vectors/np.maximum(np.linalg.norm(vectors,axis=1,keepdims=True),.001)
+        nearby=np.argpartition(unit@direction,-5)[-5:]
+        point=cap[nearby].mean(axis=0)+direction*(.014+.11*math.sin(math.pi*t)*(1+.3*math.cos(angle)))
+        path.append(point)
+    tube("HairLock","locks",path,.083+.022*math.sin(angle*13),sides=6)
+
+# Long bones remain a faint layer inside the limbs, continuous from hip and shoulder to the extremities.
+for side in [-1,1]:
+    def longbone(path, radius):
+        tube("LimbBone","limb",[[side*x,y,z] for x,y,z in path],radius,sides=8)
+    longbone([(.81,.32,.11),(.90,-.31,.17),(.91,-1.57,.13),(.94,-3.00,.00)], .108)
+    longbone([(.94,-3.05,.04),(.90,-3.81,.06),(.78,-5.64,-.05),(.71,-7.20,-.07)], .067)
+    longbone([(.99,-3.28,.01),(1.07,-4.46,-.10),(.79,-7.08,-.10)], .031)
+    longbone([(1.75,5.08,.51),(1.92,4.57,.60),(2.13,3.74,.68),(2.46,3.17,.80)], .070)
+    longbone([(2.46,3.13,.82),(2.68,2.72,.96),(3.02,2.23,1.12),(3.25,1.97,1.25)], .048)
+
+for index,(name,points,polys,normals,mat) in enumerate(parts):
+    if name == "Shell":
+        x,y,z=points.T.copy()
+        chest=np.exp(-((y-1.28)/.125)**2)
+        waist=np.exp(-((y-1.06)/.11)**2)
+        points[:,0] *= 1+.12*chest+.075*waist
+        # Slight surface relief under the translucent enamel traces the pectorals and abdomen.
+        front=np.clip((z-.004)/.065,0,1)
+        definition=.008*np.exp(-((np.abs(x)-.075)/.055)**2-((y-1.265)/.065)**2)
+        for band in (1.055,1.105,1.155):
+            definition += .005*np.exp(-((np.abs(x)-.034)/.022)**2-((y-band)/.023)**2)
+        points[:,2] += front*definition
+        points[:,0] += .012*np.clip((.82-y)/.65,0,1)
+    if name == "Liver":
+        x=points[:,0].copy()
+        y=points[:,1].copy()
+        points[:,0] = points[:,0]*.85+.004
+        points[:,1] += .016*np.cos((x+.06)*17) + .24*(x+.04)
+        points[:,2] += .012*np.cos(22*x) - .14*(y-1.10)
+    if name.startswith("Kidney"):
+        center = points.mean(0)
+        sign=1 if center[0]>0 else -1
+        inward = np.clip(-sign*(points[:,0]-center[0])/.030,0,1)
+        points[:,0] += sign*.013*inward*np.exp(-((points[:,1]-center[1])/.021)**2)
+    if name.startswith("Lung"):
+        dist=abs(points[:,0])
+        points[:,1] -= .19*(dist-.08)
+        points[:,0] *= 1.05
+
+material_id = {"shell":0, "skin":1, "hair":2, "eye":3, "iris":4, "pupil":5,
+               "heart":6, "liver":7, "kidneys":8, "lung":9, "artery":10,
+               "vein":11, "coronary":12, "vessels":13, "rib":14, "spine":15, "bronchus":16, "locks":17, "limb":18}
+packed_vertices, triangles = [], []
+offset = 0
+for name, points, polygons, normals, mat in parts:
+    packed_vertices.append(np.column_stack((points, normals)).astype("<f4").tobytes())
+    for face in polygons:
+        for j in range(1, len(face)-1):
+            triangles.append((offset+face[0],offset+face[j],offset+face[j+1],material_id[mat]))
+    offset += len(points)
+mesh_path = Path(sys.argv[2]).with_suffix(".mesh")
+with mesh_path.open("wb") as output:
+    output.write(struct.pack("<4sII", b"ETM1", offset, len(triangles)))
+    output.writelines(packed_vertices)
+    output.write(np.asarray(triangles,dtype="<u4").tobytes())
