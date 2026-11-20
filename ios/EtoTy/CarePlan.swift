@@ -44,7 +44,7 @@ struct CareWeeklyContact: Codable, Equatable {
 }
 
 enum CareReplyKind: String, Codable {
-    case greeting, help, sleep, clarify, followUp, draft, model, cloud
+    case greeting, help, sleep, clarify, followUp, draft, model, cloud, openAI, service
 }
 
 struct CareMessage: Identifiable, Codable, Equatable {

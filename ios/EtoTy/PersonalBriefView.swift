@@ -127,12 +127,18 @@ struct PersonalBriefView: View {
                     .accessibilityIdentifier("brief.area")
                     if !chosen.isEmpty {
                         Text("Включены в сводку").font(.subheadline.bold())
-                        ForEach(chosen) { document in documentToggle(document) }
+                        ForEach(chosen) { document in
+                            documentToggle(document)
+                                .accessibilityIdentifier("brief.document.included")
+                        }
                     }
                     let choices = BriefDocumentSelection.available(in: documents, area: area, selected: includedIDs)
                     if !choices.isEmpty {
                         Text("Можно добавить").font(.subheadline.bold())
-                        ForEach(choices) { document in documentToggle(document) }
+                        ForEach(choices) { document in
+                            documentToggle(document)
+                                .accessibilityIdentifier("brief.document.available")
+                        }
                     } else if let area {
                         Text("По области «" + area.rawValue + "» больше нечего добавить.")
                             .font(.footnote).foregroundStyle(.secondary)

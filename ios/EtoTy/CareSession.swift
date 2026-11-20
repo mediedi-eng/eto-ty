@@ -23,9 +23,10 @@ final class CareSession: ObservableObject {
     @Published private(set) var archivedDocuments: [CareDocument] = []
     @Published private(set) var archiveAvailable = false
     @Published private(set) var generatingReplyID: UUID?
-    @Published private(set) var cloudEnabled = false
+    @Published private(set) var cloudEnabled: Bool
     @Published private(set) var cloudIssue: String?
-    private static let cloudSetting = "personal-chat.openrouter.enabled.v1"
+    private static let cloudSetting = "personal-chat.service.enabled.v1"
+    private let preferences: UserDefaults
     private var cloudTurns: [CloudConversation.Turn] = []
 
     var documentSuggestion: CareDocumentFollowUp? {
@@ -52,16 +53,16 @@ final class CareSession: ObservableObject {
     private var permissionDate: Date?
 
     convenience init() {
-        self.init(storage: CareStorage(), documents: CareDocuments(), reminders: CareReminders.shared,
-                  cloudEnabled: UserDefaults.standard.bool(forKey: Self.cloudSetting))
+        self.init(storage: CareStorage(), documents: CareDocuments(), reminders: CareReminders.shared)
+        LegacyChatCredential.remove()
     }
 
     init(storage: CareStorage, documents: CareDocuments, reminders: CareReminderDelivery,
          now: @escaping () -> Date = Date.init, liveClock: Bool = true,
          generateReply: @escaping ([CareMessage]) async -> String? = CareConversationModel.answer,
-         cloudEnabled: Bool = false,
+         preferences: UserDefaults = .standard,
          cloudReply: @escaping (String, [CloudConversation.Turn]) async throws -> String = { input, history in
-             try await CloudConversation.answer(to: input, previous: history, key: CloudChatKey.read())
+             try await CloudConversation.answer(to: input, previous: history)
          }) {
         self.storage = storage
         self.documents = documents
@@ -69,7 +70,10 @@ final class CareSession: ObservableObject {
         self.now = now
         self.liveClock = liveClock
         self.generateReply = generateReply
-        self.cloudEnabled = cloudEnabled
+        self.preferences = preferences
+        self.cloudEnabled = (preferences.object(forKey: Self.cloudSetting) as? Bool)
+            ?? (preferences.object(forKey: "personal-chat.openrouter.enabled.v1") as? Bool)
+            ?? true
         self.cloudReply = cloudReply
         restore()
         reminders.onEvent = { [weak self] event in
@@ -122,23 +126,10 @@ final class CareSession: ObservableObject {
         apply { $0.makeConversationTopic(replyID: replyID, now: self.now()) }
     }
 
-    func connectCloud(key input: String) throws {
-        let key = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard key.hasPrefix("sk-or-"), key.utf8.count <= 512,
-              key.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) else {
-            throw CloudChatError.key
-        }
-        try CloudChatKey.store(key)
-        resetCloudConversation()
-        UserDefaults.standard.set(true, forKey: Self.cloudSetting)
-        cloudEnabled = true
-    }
-
-    func disconnectCloud() throws {
-        resetCloudConversation()
-        UserDefaults.standard.removeObject(forKey: Self.cloudSetting)
-        cloudEnabled = false
-        try CloudChatKey.remove()
+    func setCloudEnabled(_ enabled: Bool) {
+        if enabled != cloudEnabled { resetCloudConversation() }
+        preferences.set(enabled, forKey: Self.cloudSetting)
+        cloudEnabled = enabled
     }
 
     private func resetCloudConversation() {
@@ -149,8 +140,8 @@ final class CareSession: ObservableObject {
     }
 
     private func startCloudReply(to input: String, replyID: UUID) {
-        guard input.count <= 4000 else {
-            cloudIssue = "Для облачного ответа сократи сообщение до 4000 символов."
+        guard input.utf16.count <= 4000 else {
+            cloudIssue = CloudChatError.tooLong.localizedDescription
             return
         }
         generatingReplyID = replyID
@@ -162,7 +153,7 @@ final class CareSession: ObservableObject {
                 guard let self, !Task.isCancelled, self.generatingReplyID == replyID else { return }
                 self.generatingReplyID = nil
                 guard self.plan.messages.last?.id == replyID,
-                      self.apply({ $0.replaceConversationReply(id: replyID, with: text, kind: .cloud) }) else { return }
+                      self.apply({ $0.replaceConversationReply(id: replyID, with: text, kind: .service) }) else { return }
                 self.cloudTurns = Array((previous + [.init(role: "user", content: input),
                                                      .init(role: "assistant", content: text)]).suffix(6))
             } catch {
@@ -286,11 +277,9 @@ final class CareSession: ObservableObject {
     }
 
     func deleteProfile() {
-        replyTask?.cancel()
-        generatingReplyID = nil
+        resetCloudConversation()
         // Removing attachments first also makes a partially completed deletion safe to retry.
         do {
-            if cloudEnabled { try disconnectCloud() }
             try documents.deleteAll()
             try storage.delete()
         } catch {

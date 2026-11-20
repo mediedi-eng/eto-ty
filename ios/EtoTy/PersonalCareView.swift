@@ -187,7 +187,7 @@ struct PersonalCareView: View {
                 Text("Личный план · без дежурного врача")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button(session.cloudEnabled ? "ИИ · OpenRouter" : "Подключить ИИ") { sheet = .cloud }
+                Button(session.cloudEnabled ? "Приватность диалога" : "Только на iPhone") { sheet = .cloud }
                     .font(.subheadline)
                     .accessibilityIdentifier("care.cloud.settings")
             }.padding(.horizontal)
@@ -199,8 +199,10 @@ struct PersonalCareView: View {
                             welcomeCard
                         } else {
                             ForEach(session.plan.messages) { message in
-                                CareBubble(message: message, accent: accent)
-                                    .id(message.id)
+                                if session.generatingReplyID != message.id || !session.cloudEnabled {
+                                    CareBubble(message: message, accent: accent)
+                                        .id(message.id)
+                                }
                                 if message.id == session.plan.messages.last?.id, message.kind != nil {
                                     conversationActions(for: message)
                                 }
@@ -271,6 +273,13 @@ struct PersonalCareView: View {
                     Button("В диалог") { writingVisitQuestion = false; composing = false }
                 }.padding(.horizontal).padding(.top, 6)
             }
+            if !writingVisitQuestion && session.cloudEnabled {
+                Text("При отправке «Это ты» передаст в OpenAI сообщение и до трёх предыдущих пар реплик этого онлайн-диалога.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal).padding(.top, 4)
+                    .accessibilityIdentifier("care.chat.disclosure")
+            }
             HStack(alignment: .bottom, spacing: 8) {
                 Button { composing = false; sheet = .documents(nil) } label: {
                     Image(systemName: "paperclip").frame(minWidth: 44, minHeight: 44)
@@ -311,13 +320,13 @@ struct PersonalCareView: View {
         if session.generatingReplyID == reply.id {
             HStack {
                 ProgressView()
-                Text(session.cloudEnabled ? "OpenRouter отвечает…" : "Готовлю ответ на iPhone…").font(.footnote)
-            }
+                Text(session.cloudEnabled ? "«Это ты» отвечает…" : "Готовлю ответ на iPhone…").font(.footnote)
+            }.id(reply.id)
         }
         if let issue = session.cloudIssue {
             Text(issue).font(.footnote).foregroundStyle(.secondary)
         }
-        if reply.kind != .greeting && reply.kind != .help,
+        if session.generatingReplyID != reply.id, reply.kind != .greeting && reply.kind != .help,
            let user = session.plan.messages.dropLast().last, user.fromUser {
             HStack {
                 Button("В вопрос врачу") {
@@ -645,51 +654,29 @@ struct PersonalCareView: View {
     }
 
     private var bodyMap: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                sessionFeedback
-                HStack(spacing: 18) {
-                    BodyProjection(selected: region, accent: accent)
-                        .frame(width: 94, height: 180).accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(Region.allCases) { item in
-                            Button {
-                                region = item
-                            } label: {
-                                HStack {
-                                    Text(item.rawValue)
-                                    Spacer()
-                                    Image(systemName: item == region ? "checkmark.circle.fill" : "circle")
-                                }.padding(.horizontal, 12).frame(minHeight: 44)
-                                    .background(item == region ? accent.opacity(0.12) : .clear,
-                                                in: RoundedRectangle(cornerRadius: 10))
-                            }.buttonStyle(.plain).accessibilityAddTraits(item == region ? .isSelected : [])
-                        }
-                    }
+        BodyMapPanel(region: $region, accent: accent) {
+            sessionFeedback
+        } detail: {
+            if session.archiveAvailable {
+                let coverage = CareMapRegion(region, documents: session.archivedDocuments)
+                Text(coverage.summary).font(.subheadline).foregroundStyle(.secondary)
+                ForEach(coverage.documents) { document in
+                    Button { openOriginal(id: document.id, page: document.evidence?.page) } label: {
+                        DocumentSourceRow(document: document)
+                    }.buttonStyle(.plain)
                 }
-                Divider()
-                Text(region.rawValue).font(.title2.weight(.semibold))
-                if session.archiveAvailable {
-                    let coverage = CareMapRegion(region, documents: session.archivedDocuments)
-                    Text(coverage.summary).font(.subheadline).foregroundStyle(.secondary)
-                    ForEach(coverage.documents) { document in
-                        Button { openOriginal(id: document.id, page: document.evidence?.page) } label: {
-                            DocumentSourceRow(document: document)
-                        }.buttonStyle(.plain)
-                    }
-                } else {
-                    Text("Сведения о документах пока недоступны.").foregroundStyle(.secondary)
-                }
-                Button { sheet = .documents(region) } label: { Label("Документы этой области", systemImage: "doc") }
-                    .buttonStyle(.bordered).disabled(session.storageUnavailable)
-                Button { openBrief(for: region) } label: { Label("Сводка к приёму", systemImage: "doc.richtext") }
-                    .disabled(session.storageUnavailable)
-                Button("Обсудить в диалоге") {
-                    if draft.isEmpty { draft = "Хочу обсудить тему «" + region.rawValue + "»." }
-                    tab = .chat
-                    composing = true
-                }.disabled(session.storageUnavailable)
-            }.padding().frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text("Сведения о документах пока недоступны.").foregroundStyle(.secondary)
+            }
+            Button { sheet = .documents(region) } label: { Label("Документы этой области", systemImage: "doc") }
+                .buttonStyle(.bordered).disabled(session.storageUnavailable)
+            Button { openBrief(for: region) } label: { Label("Сводка к приёму", systemImage: "doc.richtext") }
+                .disabled(session.storageUnavailable)
+            Button("Обсудить в диалоге") {
+                if draft.isEmpty { draft = "Хочу обсудить тему «" + region.rawValue + "»." }
+                tab = .chat
+                composing = true
+            }.disabled(session.storageUnavailable)
         }
         .onAppear(perform: session.refreshDocuments)
     }
@@ -700,44 +687,6 @@ struct PersonalCareView: View {
         sheet = .brief(area)
     }
 
-}
-
-// Anterior, schematic orientation. The highlighted region follows the selection.
-private struct BodyProjection: View {
-    let selected: Region
-    let accent: Color
-
-    var body: some View {
-        Canvas { context, size in
-            var figure = context.resolve(Image(systemName: "figure.stand"))
-            figure.shading = .color(Color.secondary.opacity(0.34))
-            context.draw(figure, in: CGRect(origin: .zero, size: size))
-            func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-                CGPoint(x: x * size.width, y: y * size.height)
-            }
-            func kidney(at x: CGFloat) -> Path {
-                let p = point(x, 0.44)
-                return Path(ellipseIn: CGRect(x: p.x, y: p.y, width: size.width * 0.075, height: size.height * 0.066))
-            }
-            switch selected {
-            case .heart:
-                var symbol = context.resolve(Image(systemName: "heart.fill"))
-                symbol.shading = .color(accent)
-                let origin = point(0.49, 0.28)
-                context.draw(symbol, in: CGRect(origin: origin, size: CGSize(width: size.width * 0.16, height: size.height * 0.07)))
-            case .liver:
-                var shape = Path()
-                shape.move(to: point(0.34, 0.38))
-                shape.addQuadCurve(to: point(0.62, 0.38), control: point(0.44, 0.34))
-                shape.addQuadCurve(to: point(0.37, 0.44), control: point(0.53, 0.41))
-                shape.addQuadCurve(to: point(0.34, 0.38), control: point(0.31, 0.42))
-                context.fill(shape, with: .color(accent))
-            case .kidneys:
-                context.fill(kidney(at: 0.37), with: .color(accent))
-                context.fill(kidney(at: 0.55), with: .color(accent))
-            }
-        }
-    }
 }
 
 private struct DocumentSourceRow: View {
@@ -778,7 +727,9 @@ private struct CareBubble: View {
     private var author: String {
         if message.fromUser { return "Ты" }
         switch message.kind {
+        case .service: return "Это ты · ИИ"
         case .cloud: return "ИИ · OpenRouter"
+        case .openAI: return "ИИ · OpenAI"
         case .model: return "ИИ на iPhone"
         case nil: return "Это ты"
         default: return "Помощник · встроенный ответ"
